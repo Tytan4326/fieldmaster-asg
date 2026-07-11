@@ -1,0 +1,14 @@
+{
+  "name": "Fieldmaster — ASG Command",
+  "short_name": "Fieldmaster",
+  "description": "Bezpieczne zarządzanie szkoleniem SERE / OPFOR",
+  "start_url": "/?view=join",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080a09",
+  "theme_color": "#0b0e0c",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
+
