@@ -53,6 +53,16 @@ Aplikacja będzie dostępna pod `http://localhost:8080`.
 
 Plik `render.yaml` jest gotowy do wdrożenia typu Blueprint w Render po umieszczeniu projektu na GitHubie. Podczas pierwszego wdrożenia trzeba ustawić bezpieczne `ADMIN_PASSWORD`; `JWT_SECRET` zostanie wygenerowany automatycznie.
 
+Publiczne wdrożenie:
+
+- aplikacja: `https://fieldmaster-t8t4.onrender.com/`
+- panel administratora: `https://fieldmaster-t8t4.onrender.com/?view=admin`
+- dołączenie uczestnika: `https://fieldmaster-t8t4.onrender.com/?view=join`
+- kryptonim administratora: `GAME-MASTER`
+- hasło administratora jest zapisane wyłącznie w lokalnym, ignorowanym przez Git pliku `.env`
+
+Bezpłatna instancja Render usypia się po okresie bezczynności, dlatego pierwsze otwarcie po dłuższej przerwie może potrwać około minuty.
+
 GitHub Pages nie jest odpowiedni dla tej aplikacji, ponieważ nie uruchamia backendu realtime. Hosting Sites również nie jest używany w obecnej architekturze, ponieważ wymaga Cloudflare Workers zamiast długotrwałego serwera Socket.IO.
 
 ## Tryb demonstracyjny
