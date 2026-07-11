@@ -1,5 +1,5 @@
-const CACHE='fieldmaster-shell-v10';
-const SHELL=['/','/index.html','/styles.css?v=9','/app.js?v=10','/vendor/leaflet/leaflet.css','/vendor/leaflet/leaflet.js','/manifest.webmanifest','/icon.svg'];
+const CACHE='fieldmaster-shell-v11';
+const SHELL=['/','/index.html','/styles.css?v=9','/app.js?v=11','/vendor/leaflet/leaflet.css','/vendor/leaflet/leaflet.js','/manifest.webmanifest','/icon.svg'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{

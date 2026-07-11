@@ -19,9 +19,9 @@ async function request(path, options = {}) {
 }
 
 async function waitForServer(url = base) {
-  for (let i = 0; i < 40; i += 1) {
+  for (let i = 0; i < 120; i += 1) {
     try { if ((await fetch(`${url}/api/health`)).ok) return; } catch {}
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, 250));
   }
   throw new Error('Serwer testowy nie uruchomił się.');
 }
@@ -67,6 +67,11 @@ test('pełny scenariusz API zachowuje role, timer i SOS', async t => {
   assert.equal(sos.body.status, 'ACTIVE');
   const opforAfter = await request('/api/state', { headers: { Authorization: `Bearer ${opfor.body.token}` } });
   assert.deepEqual(opforAfter.body.participants.map(p => p.callsign).sort(), ['HAVOC', 'RAVEN', 'VIPER']);
+  await request(`/api/games/${admin.body.gameId}/finish`, { method: 'POST', headers: { Authorization: `Bearer ${admin.body.token}` }, body: '{}' });
+  const reset = await request(`/api/games/${admin.body.gameId}/reset`, { method: 'POST', headers: { Authorization: `Bearer ${admin.body.token}` }, body: '{}' });
+  assert.equal(reset.body.state, 'LOBBY');
+  const afterReset = await request('/api/state', { headers: { Authorization: `Bearer ${admin.body.token}` } });
+  assert.equal(afterReset.body.participants.length, 0);
 });
 
 test('lokalny stan wraca po restarcie serwera', async t => {

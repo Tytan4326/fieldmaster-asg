@@ -269,9 +269,18 @@ app.post('/api/messages', auth, requireRole('ADMIN'), (req, res) => {
   io.to(`game:${gameId}`).emit('message:new', message);
   res.status(201).json(message);
 });
-app.post('/api/games/:id/:action(start|pause|resume|finish)', auth, requireRole('ADMIN'), (req, res) => {
+app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requireRole('ADMIN'), (req, res) => {
   const game = store.games.get(req.params.id);
   if (!game) return res.status(404).json({ error: 'Nie znaleziono gry.' });
+  if (req.params.action === 'reset') {
+    for (const [id, participant] of store.participants) if (participant.gameId === game.id) store.participants.delete(id);
+    for (const [id, timer] of store.timers) if (timer.gameId === game.id) store.timers.delete(id);
+    for (const [id, alert] of store.sos) if (alert.gameId === game.id) store.sos.delete(id);
+    store.events = store.events.filter(item => item.gameId !== game.id);
+    Object.assign(game, { state: 'LOBBY', startedAt: null, pausedAt: null, finishedAt: null });
+    event(game.id, 'GAME_RESET', {});
+    io.to(`game:${game.id}`).emit('game:changed', game); broadcastState(game.id); return res.json(game);
+  }
   const next = { start: 'ACTIVE', pause: 'PAUSED', resume: 'ACTIVE', finish: 'FINISHED' }[req.params.action];
   game.state = next; game[`${req.params.action === 'finish' ? 'finished' : req.params.action === 'start' ? 'started' : req.params.action}At`] = new Date().toISOString();
   if (req.params.action === 'start' || req.params.action === 'resume') {
