@@ -110,3 +110,36 @@ test('lokalny stan wraca po restarcie serwera', async t => {
   const restored = await (await fetch(`${persistenceBase}/api/state`, { headers: { Authorization: `Bearer ${admin.token}` } })).json();
   assert.deepEqual(restored.participants.map(p => p.callsign), ['PERSIST']);
 });
+
+test('administrator prowadzi wiele sesji, zmienia kody i funkcje niezależnie', async t => {
+  const multiPort = 18082, multiBase = `http://127.0.0.1:${multiPort}`;
+  const processChild = spawn(process.execPath, ['server/index.js'], {
+    cwd: process.cwd(),
+    env: { ...process.env, PORT: String(multiPort), NODE_ENV: 'development', ADMIN_PASSWORD: '2468', JWT_SECRET: 'multi-session-test-secret-at-least-32' },
+    stdio: 'ignore'
+  });
+  t.after(() => processChild.kill());
+  await waitForServer(multiBase);
+  const call = async (route, options = {}) => {
+    const response = await fetch(`${multiBase}${route}`, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    return { response, body: await response.json() };
+  };
+  const admin = await call('/api/auth/admin', { method: 'POST', body: JSON.stringify({ callsign: 'GAME-MASTER', password: '2468' }) });
+  const authHeader = { Authorization: `Bearer ${admin.body.token}` };
+  const second = await call('/api/games', { method: 'POST', headers: authHeader, body: JSON.stringify({ code: 'ORZEL25', name: 'Operacja Orzeł', cloneSettingsFrom: admin.body.gameId }) });
+  assert.equal(second.response.status, 201);
+  const firstJoin = await call('/api/games/WILK24/join', { method: 'POST', body: JSON.stringify({ callsign: 'SCOUT', team: 'SERE', consent: true, consentVersion: 'test' }) });
+  const secondJoin = await call('/api/games/ORZEL25/join', { method: 'POST', body: JSON.stringify({ callsign: 'SCOUT', team: 'OPFOR', consent: true, consentVersion: 'test' }) });
+  assert.equal(firstJoin.response.status, 201);
+  assert.equal(secondJoin.response.status, 201);
+  const secondState = await call(`/api/state?gameId=${second.body.id}`, { headers: authHeader });
+  assert.deepEqual(secondState.body.participants.map(item => item.team), ['OPFOR']);
+  const changed = await call(`/api/games/${second.body.id}/settings`, { method: 'PATCH', headers: authHeader, body: JSON.stringify({ code: 'ORZEL26', features: { allowJoining: false, sos: false, mgrsGrid: false } }) });
+  assert.equal(changed.body.code, 'ORZEL26');
+  assert.equal(changed.body.features.allowJoining, false);
+  assert.equal((await call('/api/games/ORZEL25/public')).response.status, 404);
+  assert.equal((await call('/api/games/ORZEL26/join', { method: 'POST', body: JSON.stringify({ callsign: 'NEW', team: 'SERE', consent: true, consentVersion: 'test' }) })).response.status, 409);
+  assert.equal((await call('/api/sos', { method: 'POST', headers: { Authorization: `Bearer ${secondJoin.body.token}` }, body: '{}' })).response.status, 409);
+  const games = await call('/api/games', { headers: authHeader });
+  assert.equal(games.body.length, 2);
+});

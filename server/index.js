@@ -21,6 +21,15 @@ const ADMIN_CALLSIGN = process.env.ADMIN_CALLSIGN || 'GAME-MASTER';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '2468';
 const DATA_FILE = process.env.DATA_FILE ? path.resolve(process.env.DATA_FILE) : null;
 
+const DEFAULT_FEATURES = Object.freeze({
+  gpsTracking: true, geofence: true, sos: true, timers: true,
+  allowTeamChanges: true, allowJoining: true, satelliteDefault: true, mgrsGrid: true,
+  shareLocationInLobby: true, opforTeamMap: true, audioAlarms: true, vibration: true,
+  boundaryReminders: true, pwaInstall: true, adminMessages: true, csvExport: true,
+  showBattery: true, showAccuracy: true, gpsFallback: true, offlineQueue: true
+});
+const FEATURE_KEYS = Object.keys(DEFAULT_FEATURES);
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: false }, maxHttpBufferSize: 250_000 });
@@ -60,7 +69,7 @@ function restoreState() {
   if (!DATA_FILE || !fs.existsSync(DATA_FILE)) return false;
   try {
     const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    for (const item of data.games || []) store.games.set(item.id, item);
+    for (const item of data.games || []) store.games.set(item.id, { ...item, features: { ...DEFAULT_FEATURES, ...(item.features || {}) } });
     for (const item of data.participants || []) {
       item.activeTimer = null;
       if (['TIMER','RESPAWN'].includes(item.status)) item.status = 'ACTIVE';
@@ -81,10 +90,24 @@ if (!restored || !demoGame) {
   demoGame = {
     id: crypto.randomUUID(), code: 'WILK24', name: 'Operacja Nocny Wilk', state: 'LOBBY',
     durationMinutes: 1440, sereTimerSeconds: 20, opforTimerSeconds: 60, boundary,
+    features: { ...DEFAULT_FEATURES },
     startedAt: null, finishedAt: null, createdAt: new Date().toISOString()
   };
   store.games.set(demoGame.id, demoGame);
   persistSoon();
+}
+demoGame ||= [...store.games.values()][0];
+
+function makeGame({ code, name, source = demoGame }) {
+  return {
+    id: crypto.randomUUID(), code, name, state: 'LOBBY',
+    durationMinutes: source?.durationMinutes || 1440,
+    sereTimerSeconds: source?.sereTimerSeconds || 20,
+    opforTimerSeconds: source?.opforTimerSeconds || 60,
+    boundary: (source?.boundary || boundary).map(point => [...point]),
+    features: { ...DEFAULT_FEATURES, ...(source?.features || {}) },
+    startedAt: null, pausedAt: null, finishedAt: null, createdAt: new Date().toISOString()
+  };
 }
 
 const joinSchema = z.object({
@@ -99,12 +122,19 @@ const locationSchema = z.object({
   timestamp: z.string().datetime().optional()
 });
 const settingsSchema = z.object({
+  code: z.string().trim().min(4).max(16).regex(/^[A-Za-z0-9_-]+$/).transform(value => value.toUpperCase()).optional(),
   name: z.string().trim().min(3).max(100).optional(),
   durationMinutes: z.number().int().min(10).max(2880).optional(),
   sereTimerSeconds: z.number().int().min(5).max(600).optional(),
   opforTimerSeconds: z.number().int().min(5).max(600).optional(),
-  boundary: z.array(z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)])).min(3).max(100).optional()
+  boundary: z.array(z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)])).min(3).max(100).optional(),
+  features: z.object(Object.fromEntries(FEATURE_KEYS.map(key => [key, z.boolean().optional()]))).strict().optional()
 }).refine(value => Object.keys(value).length > 0);
+const createGameSchema = z.object({
+  code: z.string().trim().min(4).max(16).regex(/^[A-Za-z0-9_-]+$/).transform(value => value.toUpperCase()),
+  name: z.string().trim().min(3).max(100),
+  cloneSettingsFrom: z.string().uuid().optional()
+});
 const participantUpdateSchema = z.object({
   status: z.enum(['WAITING','READY','ACTIVE','TIMER','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED']).optional(),
   team: z.enum(['SERE','OPFOR']).optional()
@@ -127,14 +157,16 @@ function participantView(p) {
   const timer = p.activeTimer ? store.timers.get(p.activeTimer) : null;
   return { ...safe, timerEnd: timer?.endsAt || null };
 }
+function feature(game, key) { return game?.features?.[key] ?? DEFAULT_FEATURES[key] ?? true; }
 function visibleParticipants(gameId, viewer) {
+  const game = store.games.get(gameId);
   const currentViewer = viewer.participantId ? store.participants.get(viewer.participantId) : null;
   const effectiveTeam = currentViewer?.team || viewer.team;
   return [...store.participants.values()].filter(p => p.gameId === gameId).filter(p => {
     if (['ADMIN', 'MODERATOR'].includes(viewer.role)) return true;
     if (p.activeSos) return true;
     if (p.id === viewer.participantId) return true;
-    return effectiveTeam === 'OPFOR' && p.team === 'OPFOR';
+    return feature(game, 'opforTeamMap') && effectiveTeam === 'OPFOR' && p.team === 'OPFOR';
   }).map(participantView);
 }
 function gameByCode(code) { return [...store.games.values()].find(g => g.code === code.toUpperCase()); }
@@ -162,20 +194,35 @@ app.get('/api/health', (_req, res) => res.json({ ok: true, now: new Date().toISO
 app.get('/api/games/:code/public', (req, res) => {
   const game = gameByCode(req.params.code);
   if (!game) return res.status(404).json({ error: 'Nie znaleziono sesji.' });
-  res.json({ id: game.id, code: game.code, name: game.name, state: game.state, participantCount: [...store.participants.values()].filter(p => p.gameId === game.id).length });
+  res.json({ id: game.id, code: game.code, name: game.name, state: game.state, features: game.features, participantCount: [...store.participants.values()].filter(p => p.gameId === game.id).length });
+});
+app.get('/api/games', auth, requireRole('ADMIN'), (_req, res) => {
+  res.json([...store.games.values()].map(game => ({
+    id: game.id, code: game.code, name: game.name, state: game.state, createdAt: game.createdAt,
+    participantCount: [...store.participants.values()].filter(p => p.gameId === game.id).length
+  })).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))));
+});
+app.post('/api/games', auth, requireRole('ADMIN'), (req, res) => {
+  const parsed = createGameSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Kod sesji musi mieć 4–16 znaków (litery, cyfry, _ lub -).' });
+  if (gameByCode(parsed.data.code)) return res.status(409).json({ error: 'Ten kod sesji jest już używany.' });
+  const source = parsed.data.cloneSettingsFrom ? store.games.get(parsed.data.cloneSettingsFrom) : demoGame;
+  const game = makeGame({ code: parsed.data.code, name: parsed.data.name, source });
+  store.games.set(game.id, game); event(game.id, 'SESSION_CREATED', { code: game.code, name: game.name });
+  persistSoon(); res.status(201).json(game);
 });
 app.post('/api/auth/admin', async (req, res) => {
   const callsignOk = String(req.body?.callsign || '').toUpperCase() === ADMIN_CALLSIGN.toUpperCase();
   const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 8);
   const passwordOk = await bcrypt.compare(String(req.body?.password || ''), passwordHash);
   if (!callsignOk || !passwordOk) return res.status(401).json({ error: 'Nieprawidłowe dane.' });
-  res.json({ token: sign({ role: 'ADMIN', callsign: ADMIN_CALLSIGN, gameId: demoGame.id }), role: 'ADMIN', gameId: demoGame.id });
+  res.json({ token: sign({ role: 'ADMIN', callsign: ADMIN_CALLSIGN }), role: 'ADMIN', gameId: demoGame.id });
 });
 app.post('/api/games/:code/join', (req, res) => {
   const parsed = joinSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Sprawdź kryptonim, drużynę i zgody.', issues: parsed.error.issues });
   const game = gameByCode(req.params.code);
-  if (!game || !['LOBBY', 'DRAFT'].includes(game.state)) return res.status(409).json({ error: 'Do tej sesji nie można teraz dołączyć.' });
+  if (!game || !['LOBBY', 'DRAFT'].includes(game.state) || !feature(game, 'allowJoining')) return res.status(409).json({ error: 'Do tej sesji nie można teraz dołączyć.' });
   const normalized = parsed.data.callsign.toLocaleUpperCase('pl-PL');
   const duplicate = [...store.participants.values()].some(p => p.gameId === game.id && p.normalizedCallsign === normalized);
   if (duplicate) return res.status(409).json({ error: 'Ten kryptonim jest już zajęty.' });
@@ -202,6 +249,8 @@ app.patch('/api/games/:id/settings', auth, requireRole('ADMIN'), (req, res) => {
   const game = store.games.get(req.params.id);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowe ustawienia gry.' });
   if (game.state === 'ACTIVE' && parsed.data.boundary) return res.status(409).json({ error: 'Wstrzymaj grę przed zmianą granicy terenu.' });
+  if (parsed.data.code && [...store.games.values()].some(item => item.id !== game.id && item.code === parsed.data.code)) return res.status(409).json({ error: 'Ten kod sesji jest już używany.' });
+  if (parsed.data.features) parsed.data.features = { ...game.features, ...parsed.data.features };
   Object.assign(game, parsed.data);
   event(game.id, 'GAME_SETTINGS_CHANGED', { fields: Object.keys(parsed.data) });
   broadcastState(game.id);
@@ -213,7 +262,7 @@ app.patch('/api/participants/:id', auth, requireRole('ADMIN','MODERATOR'), (req,
   const participant = store.participants.get(req.params.id);
   const game = participant && store.games.get(participant.gameId);
   if (!parsed.success || !participant || !game) return res.status(400).json({ error: 'Nieprawidłowa zmiana uczestnika.' });
-  if (parsed.data.team && game.state !== 'LOBBY') return res.status(409).json({ error: 'Drużynę można zmienić tylko przed startem gry.' });
+  if (parsed.data.team && (game.state !== 'LOBBY' || !feature(game, 'allowTeamChanges'))) return res.status(409).json({ error: 'Zmiana drużyny jest wyłączona lub gra już się rozpoczęła.' });
   Object.assign(participant, parsed.data);
   event(game.id, 'PARTICIPANT_CHANGED', { callsign: participant.callsign, ...parsed.data }, participant.id);
   broadcastState(game.id);
@@ -224,9 +273,10 @@ app.post('/api/locations', auth, requireRole('PARTICIPANT'), (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'Nieprawidłowa lokalizacja.' });
   const p = store.participants.get(req.auth.participantId); const game = store.games.get(p?.gameId);
   if (!p || !game || game.state === 'FINISHED') return res.status(409).json({ error: 'Śledzenie zostało zakończone dla tej sesji.' });
+  if (!feature(game, 'gpsTracking') || (game.state !== 'ACTIVE' && !feature(game, 'shareLocationInLobby'))) return res.status(409).json({ error: 'Udostępnianie lokalizacji jest wyłączone dla tej sesji.' });
   const loc = { ...parsed.data, timestamp: parsed.data.timestamp || new Date().toISOString() };
   p.location = loc; p.lastSeenAt = new Date().toISOString(); p.battery = loc.battery ?? p.battery;
-  const outside = game.state === 'ACTIVE' && !pointInPolygon(loc.latitude, loc.longitude, game.boundary);
+  const outside = feature(game, 'geofence') && game.state === 'ACTIVE' && !pointInPolygon(loc.latitude, loc.longitude, game.boundary);
   if (outside !== Boolean(p.outside)) {
     p.outside = outside; p.status = outside ? 'OUTSIDE' : game.state === 'ACTIVE' ? 'ACTIVE' : 'READY';
     if (outside) p.boundaryCount += 1;
@@ -236,7 +286,7 @@ app.post('/api/locations', auth, requireRole('PARTICIPANT'), (req, res) => {
 });
 app.post('/api/timers', auth, requireRole('PARTICIPANT'), (req, res) => {
   const p = store.participants.get(req.auth.participantId); const game = store.games.get(p?.gameId);
-  if (!p || !game || game.state !== 'ACTIVE' || p.activeTimer) return res.status(409).json({ error: 'Timer nie może być teraz uruchomiony.' });
+  if (!p || !game || !feature(game, 'timers') || game.state !== 'ACTIVE' || p.activeTimer) return res.status(409).json({ error: 'Timer nie może być teraz uruchomiony.' });
   const seconds = p.team === 'SERE' ? game.sereTimerSeconds : game.opforTimerSeconds;
   const timer = { id: crypto.randomUUID(), gameId: game.id, participantId: p.id, seconds, startedAt: Date.now(), endsAt: Date.now() + seconds * 1000 };
   store.timers.set(timer.id, timer); p.activeTimer = timer.id; p.timerCount += 1; p.status = p.team === 'SERE' ? 'TIMER' : 'RESPAWN';
@@ -246,7 +296,7 @@ app.post('/api/timers', auth, requireRole('PARTICIPANT'), (req, res) => {
 });
 app.post('/api/sos', auth, requireRole('PARTICIPANT'), (req, res) => {
   const p = store.participants.get(req.auth.participantId); const game = store.games.get(p?.gameId);
-  if (!p || !game || game.state === 'FINISHED') return res.status(409).json({ error: 'SOS nie może być zapisany w tej sesji.' });
+  if (!p || !game || !feature(game, 'sos') || game.state === 'FINISHED') return res.status(409).json({ error: 'SOS jest wyłączony lub sesja została zakończona.' });
   const alert = { id: crypto.randomUUID(), gameId: game.id, participantId: p.id, callsign: p.callsign, team: p.team, status: 'ACTIVE', location: p.location, activatedAt: new Date().toISOString() };
   store.sos.set(alert.id, alert); p.activeSos = true; p.status = 'SOS';
   event(game.id, 'SOS_ACTIVATED', { callsign: p.callsign, location: p.location }, p.id, 'CRITICAL');
@@ -263,9 +313,10 @@ app.patch('/api/sos/:id', auth, requireRole('ADMIN','MODERATOR'), (req, res) => 
   io.to(`game:${alert.gameId}`).emit('sos:changed', alert); broadcastState(alert.gameId); res.json(alert);
 });
 app.post('/api/messages', auth, requireRole('ADMIN'), (req, res) => {
-  const parsed = z.object({ audience: z.enum(['ALL','SERE','OPFOR']), body: z.string().trim().min(1).max(300) }).safeParse(req.body);
-  const gameId = req.auth.gameId || demoGame.id;
-  if (!parsed.success || !store.games.has(gameId)) return res.status(400).json({ error: 'Nieprawidłowy komunikat.' });
+  const parsed = z.object({ gameId: z.string().uuid(), audience: z.enum(['ALL','SERE','OPFOR']), body: z.string().trim().min(1).max(300) }).safeParse(req.body);
+  const gameId = parsed.success ? parsed.data.gameId : null; const game = store.games.get(gameId);
+  if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowy komunikat.' });
+  if (!feature(game, 'adminMessages')) return res.status(409).json({ error: 'Komunikaty administratora są wyłączone.' });
   const message = { id: crypto.randomUUID(), gameId, ...parsed.data, time: Date.now(), createdAt: new Date().toISOString() };
   event(gameId, 'ADMIN_MESSAGE', { audience: message.audience, body: message.body });
   io.to(`game:${gameId}`).emit('message:new', message);
@@ -305,6 +356,7 @@ function broadcastState(gameId) {
 io.use((socket, next) => { try { socket.auth = jwt.verify(socket.handshake.auth?.token, JWT_SECRET); next(); } catch { next(new Error('unauthorized')); } });
 io.on('connection', socket => {
   const a = socket.auth; const gameId = a.gameId || socket.handshake.auth?.gameId || demoGame.id;
+  if (!store.games.has(gameId)) return socket.disconnect(true);
   socket.data.gameId = gameId;
   socket.join(`game:${gameId}`);
   if (['ADMIN','MODERATOR'].includes(a.role)) socket.join(`game:${gameId}:staff`);

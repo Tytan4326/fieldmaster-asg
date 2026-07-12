@@ -46,6 +46,14 @@ button,input,select,textarea{font:inherit} button{color:inherit} a{color:var(--l
 .leaflet-map .leaflet-tile{will-change:auto}
 .leaflet-map .leaflet-control-layers{background:#111713;color:var(--text);border-color:#344036}
 .leaflet-map .leaflet-control-layers label{color:var(--text);font:10px var(--mono)}
+.modal-backdrop{z-index:10000}
+.hold-button,.hold-button *{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.hold-button{touch-action:none;cursor:pointer}
+.hold-button span{pointer-events:none}
+.session-switch{display:flex;align-items:center;gap:7px;color:var(--muted);font:9px var(--mono)}
+.session-switch .select{min-height:34px;max-width:250px}
+.feature-panel{grid-column:1/-1}.feature-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;padding:16px}.feature-toggle{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:start;padding:13px;border:1px solid #303a32;border-radius:10px;background:#0d120f;cursor:pointer}.feature-toggle input{position:absolute;opacity:0}.feature-toggle .feature-switch{width:38px;height:22px;border-radius:99px;background:#394039;position:relative;grid-row:1}.feature-toggle .feature-switch:after{content:"";position:absolute;width:16px;height:16px;left:3px;top:3px;border-radius:50%;background:#a7afa8;transition:.18s}.feature-toggle input:checked+.feature-switch{background:#548c31}.feature-toggle input:checked+.feature-switch:after{left:19px;background:#d7ff7a}.feature-toggle b{display:block;font-size:12px}.feature-toggle small{display:block;color:var(--muted);line-height:1.4;margin-top:4px}.feature-toggle em{font:8px var(--mono);color:var(--lime);border:1px solid #496735;padding:2px 4px;border-radius:4px;margin-left:5px}
+@media(max-width:800px){.feature-grid{grid-template-columns:1fr}.session-switch span{display:none}.session-switch .select{max-width:150px}}
 .fm-map-marker{width:24px;height:24px;border-width:2px;font-size:8px;box-shadow:0 0 0 3px #080a0999,0 0 12px currentColor}
 .mgrs-grid-label{background:#0a0d0bcf!important;border:1px solid #cfff7977!important;color:#e7ffc2!important;border-radius:3px;font:700 8px/14px var(--mono);text-align:center;white-space:nowrap}
 .boundary-vertex-wrap{background:none!important;border:0!important}

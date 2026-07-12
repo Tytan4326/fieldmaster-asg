@@ -21,13 +21,15 @@ Telefon w tej samej sieci może otworzyć adres IP komputera, np. `http://192.16
 - synchronizacja wielu urządzeń przez REST i Socket.IO,
 - admin widzi wszystkich; OPFOR tylko OPFOR; SERE tylko siebie,
 - aktywny SOS ujawnia pozycję osoby wzywającej pomocy wszystkim,
-- GPS tylko podczas aktywnej sesji, geofencing i alarm granicy,
+- GPS w lobby lub podczas aktywnej sesji (według ustawień), geofencing i alarm granicy,
 - timer SERE 20 s oraz OPFOR 60 s z sygnałem dźwiękowym,
 - dwustopniowe potwierdzenie SOS i obsługa alarmu przez administratora,
 - mapa taktyczna, lista uczestników, historia, komunikaty i statystyki,
 - eksport raportu CSV,
 - instalowalna PWA, cache aplikacji i lokalna kolejka offline,
 - trwały lokalny zapis stanu po restarcie serwera.
+- wiele równoległych, całkowicie rozdzielonych sesji z własnymi kodami, uczestnikami i stanem,
+- 20 funkcji włączanych osobno przez administratora, w tym GPS, granica, SOS, timery, dołączanie i widoczność OPFOR.
 
 ## Testy
 
@@ -36,7 +38,7 @@ $env:Path = 'C:\Program Files\nodejs;' + $env:Path
 & 'C:\Program Files\nodejs\npm.cmd' run check
 ```
 
-Test integracyjny uruchamia osobny serwer i sprawdza logowanie, duplikaty kryptonimów, prywatność obu drużyn, start gry, timer oraz SOS.
+Testy integracyjne uruchamiają osobne serwery i sprawdzają logowanie, duplikaty kryptonimów, prywatność obu drużyn, start gry, timer, SOS, wiele sesji, zmianę kodu oraz blokowanie funkcji.
 
 ## Docker
 
@@ -72,7 +74,9 @@ Bezpłatna instancja Render usypia się po okresie bezczynności, dlatego pierws
 
 Po zaakceptowaniu zgód pozycja jest wysyłana organizatorowi już w lobby, dzięki czemu można sprawdzić urządzenia przed rozpoczęciem gry. Aplikacja najpierw próbuje dokładnego GPS, następnie automatycznie przełącza się na tryb zgodny i ponawia połączenie. Mapa używa domyślnie zdjęć satelitarnych Esri z wymaganym przypisaniem źródła oraz nakładki UTM/MGRS.
 
-Administrator może zmienić drużynę uczestnika w zakładce `Uczestnicy` do momentu rozpoczęcia gry. Granicę edytuje się w `Ustawieniach`: kliknięcie dodaje punkt, przeciągnięcie zielonego uchwytu przesuwa punkt, a wyczyszczenie punktów nie zmienia widoku mapy.
+Administrator może zmienić drużynę uczestnika w zakładce `Uczestnicy` do momentu rozpoczęcia gry. W górnym pasku przełącza aktywną sesję, a w `Ustawieniach` tworzy kolejne sesje, zmienia ich kody i steruje 20 funkcjami. Granicę edytuje się w `Ustawieniach`: kliknięcie dodaje punkt, przeciągnięcie zielonego uchwytu przesuwa punkt, a wyczyszczenie punktów nie zmienia widoku mapy. Na komputerze bez odbiornika GPS można utworzyć obszar wokół ręcznie ustawionego środka mapy.
+
+Mapa zapamiętuje ręczne przesunięcie i zbliżenie osobno dla każdego widoku i każdej sesji. Automatyczne wyśrodkowanie następuje przy pierwszym otwarciu oraz po rozpoczęciu gry; późniejsze aktualizacje GPS nie przejmują sterowania kamerą.
 
 GitHub Pages nie jest odpowiedni dla tej aplikacji, ponieważ nie uruchamia backendu realtime. Hosting Sites również nie jest używany w obecnej architekturze, ponieważ wymaga Cloudflare Workers zamiast długotrwałego serwera Socket.IO.
 
