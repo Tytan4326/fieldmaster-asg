@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
+    "icons": "node scripts/generate-icons.mjs",
     "test": "node --test server/*.test.js",
     "check": "node --check public/app.js && node --check server/index.js && npm test"
   },

@@ -63,6 +63,17 @@ Publiczne wdrożenie:
 
 Bezpłatna instancja Render usypia się po okresie bezczynności, dlatego pierwsze otwarcie po dłuższej przerwie może potrwać około minuty.
 
+### Telefon, instalacja i GPS
+
+1. Otwórz publiczny link dołączania w Chrome na Androidzie albo Safari na iPhonie.
+2. Naciśnij `Zainstaluj aplikację`. Jeżeli system nie pokaże instalatora, aplikacja wyświetli właściwą instrukcję dla telefonu.
+3. W ustawieniach strony ustaw lokalizację na `Zezwalaj` i włącz dokładną lokalizację telefonu.
+4. Podczas testu GPS pozostaw ekran aktywny i najlepiej wyjdź na otwartą przestrzeń.
+
+Po zaakceptowaniu zgód pozycja jest wysyłana organizatorowi już w lobby, dzięki czemu można sprawdzić urządzenia przed rozpoczęciem gry. Aplikacja najpierw próbuje dokładnego GPS, następnie automatycznie przełącza się na tryb zgodny i ponawia połączenie. Mapa używa domyślnie zdjęć satelitarnych Esri z wymaganym przypisaniem źródła oraz nakładki UTM/MGRS.
+
+Administrator może zmienić drużynę uczestnika w zakładce `Uczestnicy` do momentu rozpoczęcia gry. Granicę edytuje się w `Ustawieniach`: kliknięcie dodaje punkt, przeciągnięcie zielonego uchwytu przesuwa punkt, a wyczyszczenie punktów nie zmienia widoku mapy.
+
 GitHub Pages nie jest odpowiedni dla tej aplikacji, ponieważ nie uruchamia backendu realtime. Hosting Sites również nie jest używany w obecnej architekturze, ponieważ wymaga Cloudflare Workers zamiast długotrwałego serwera Socket.IO.
 
 ## Tryb demonstracyjny

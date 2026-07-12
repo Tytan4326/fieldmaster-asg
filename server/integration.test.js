@@ -50,12 +50,20 @@ test('pełny scenariusz API zachowuje role, timer i SOS', async t => {
   assert.deepEqual(opforBefore.body.participants.map(p => p.callsign).sort(), ['HAVOC', 'VIPER']);
   const sereBefore = await request('/api/state', { headers: { Authorization: `Bearer ${sere.body.token}` } });
   assert.deepEqual(sereBefore.body.participants.map(p => p.callsign), ['RAVEN']);
+  const lobbyLocation = await request('/api/locations', { method: 'POST', headers: { Authorization: `Bearer ${sere.body.token}` }, body: JSON.stringify({ latitude: 52.23, longitude: 21.02, accuracy: 12, timestamp: new Date().toISOString() }) });
+  assert.equal(lobbyLocation.response.status, 202);
+  assert.equal(lobbyLocation.body.outside, false);
+  const adminLobbyState = await request('/api/state', { headers: { Authorization: `Bearer ${admin.body.token}` } });
+  assert.equal(adminLobbyState.body.participants.find(p => p.callsign === 'RAVEN').location.accuracy, 12);
 
   const settings = await request(`/api/games/${admin.body.gameId}/settings`, { method: 'PATCH', headers: { Authorization: `Bearer ${admin.body.token}` }, body: JSON.stringify({ durationMinutes: 720, opforTimerSeconds: 75, boundary: [[52.0,21.0],[52.01,21.0],[52.01,21.01],[52.0,21.01]] }) });
   assert.equal(settings.body.durationMinutes, 720);
   assert.equal(settings.body.boundary.length, 4);
-  const participantChange = await request(`/api/participants/${opforMate.body.participant.id}`, { method: 'PATCH', headers: { Authorization: `Bearer ${admin.body.token}` }, body: JSON.stringify({ status: 'READY' }) });
-  assert.equal(participantChange.body.status, 'READY');
+  const participantChange = await request(`/api/participants/${opforMate.body.participant.id}`, { method: 'PATCH', headers: { Authorization: `Bearer ${admin.body.token}` }, body: JSON.stringify({ status: 'READY', team: 'SERE' }) });
+  assert.equal(participantChange.body.team, 'SERE');
+  const changedTeamView = await request('/api/state', { headers: { Authorization: `Bearer ${opforMate.body.token}` } });
+  assert.deepEqual(changedTeamView.body.participants.map(p => p.callsign), ['HAVOC']);
+  await request(`/api/participants/${opforMate.body.participant.id}`, { method: 'PATCH', headers: { Authorization: `Bearer ${admin.body.token}` }, body: JSON.stringify({ team: 'OPFOR' }) });
 
   await request(`/api/games/${admin.body.gameId}/start`, { method: 'POST', headers: { Authorization: `Bearer ${admin.body.token}` }, body: '{}' });
   const timer = await request('/api/timers', { method: 'POST', headers: { Authorization: `Bearer ${opforMate.body.token}` }, body: '{}' });

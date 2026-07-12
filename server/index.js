@@ -128,11 +128,13 @@ function participantView(p) {
   return { ...safe, timerEnd: timer?.endsAt || null };
 }
 function visibleParticipants(gameId, viewer) {
+  const currentViewer = viewer.participantId ? store.participants.get(viewer.participantId) : null;
+  const effectiveTeam = currentViewer?.team || viewer.team;
   return [...store.participants.values()].filter(p => p.gameId === gameId).filter(p => {
     if (['ADMIN', 'MODERATOR'].includes(viewer.role)) return true;
     if (p.activeSos) return true;
     if (p.id === viewer.participantId) return true;
-    return viewer.team === 'OPFOR' && p.team === 'OPFOR';
+    return effectiveTeam === 'OPFOR' && p.team === 'OPFOR';
   }).map(participantView);
 }
 function gameByCode(code) { return [...store.games.values()].find(g => g.code === code.toUpperCase()); }
@@ -221,12 +223,12 @@ app.post('/api/locations', auth, requireRole('PARTICIPANT'), (req, res) => {
   const parsed = locationSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Nieprawidłowa lokalizacja.' });
   const p = store.participants.get(req.auth.participantId); const game = store.games.get(p?.gameId);
-  if (!p || !game || game.state !== 'ACTIVE') return res.status(409).json({ error: 'Śledzenie działa tylko w aktywnej grze.' });
+  if (!p || !game || game.state === 'FINISHED') return res.status(409).json({ error: 'Śledzenie zostało zakończone dla tej sesji.' });
   const loc = { ...parsed.data, timestamp: parsed.data.timestamp || new Date().toISOString() };
   p.location = loc; p.lastSeenAt = new Date().toISOString(); p.battery = loc.battery ?? p.battery;
-  const outside = !pointInPolygon(loc.latitude, loc.longitude, game.boundary);
+  const outside = game.state === 'ACTIVE' && !pointInPolygon(loc.latitude, loc.longitude, game.boundary);
   if (outside !== Boolean(p.outside)) {
-    p.outside = outside; p.status = outside ? 'OUTSIDE' : 'ACTIVE';
+    p.outside = outside; p.status = outside ? 'OUTSIDE' : game.state === 'ACTIVE' ? 'ACTIVE' : 'READY';
     if (outside) p.boundaryCount += 1;
     event(game.id, outside ? 'BOUNDARY_EXIT' : 'BOUNDARY_RETURN', { callsign: p.callsign }, p.id, outside ? 'WARNING' : 'INFO');
   }
