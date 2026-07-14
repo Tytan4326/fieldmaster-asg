@@ -14,12 +14,12 @@ Kliknij dwukrotnie `START_FIELDMASTER.cmd`. Skrypt sam sprawdzi zależności, ur
 
 Telefon w tej samej sieci może otworzyć adres IP komputera, np. `http://192.168.1.20:8080/?view=join`. Przeglądarki wymagają jednak HTTPS dla prawdziwego GPS, dlatego zastosowanie terenowe na telefonach powinno korzystać z wdrożenia HTTPS.
 
-## Funkcje MVP
+## Najważniejsze funkcje
 
 - dołączanie przez kod z unikalnym kryptonimem, wyborem SERE/OPFOR i zgodami,
 - blokada samodzielnej zmiany drużyny,
 - synchronizacja wielu urządzeń przez REST i Socket.IO,
-- admin widzi wszystkich; OPFOR tylko OPFOR; SERE tylko siebie,
+- widoczność graczy wynika z roli, drużyny operacyjnej, uprawnień i reguł scenariusza,
 - aktywny SOS ujawnia pozycję osoby wzywającej pomocy wszystkim,
 - GPS w lobby lub podczas aktywnej sesji (według ustawień), geofencing i alarm granicy,
 - timer SERE 20 s oraz OPFOR 60 s z sygnałem dźwiękowym,
@@ -27,9 +27,14 @@ Telefon w tej samej sieci może otworzyć adres IP komputera, np. `http://192.16
 - mapa taktyczna, lista uczestników, historia, komunikaty i statystyki,
 - eksport raportu CSV,
 - instalowalna PWA, cache aplikacji i lokalna kolejka offline,
-- trwały lokalny zapis stanu po restarcie serwera.
+- trwały lokalny zapis stanu po restarcie serwera,
 - wiele równoległych, całkowicie rozdzielonych sesji z własnymi kodami, uczestnikami i stanem,
-- 20 funkcji włączanych osobno przez administratora, w tym GPS, granica, SOS, timery, dołączanie i widoczność OPFOR.
+- ponad 50 funkcji włączanych osobno przez administratora,
+- panel drużyn operacyjnych: dodawanie, usuwanie, limity osób, kolor, kanał radiowy, widoczność mapy, dozwolone role i własny czas respawnu,
+- edytowalne role ze zdolnościami: dowodzenie, medyk, saper, zwiad, VIP, operator konwoju i sędzia polowy,
+- presety całej operacji oraz presety uprawnień kont personelu,
+- pełne archiwum przebiegu: ustawienia, uczestnicy, zdarzenia, wiadomości, SOS i trasy GPS; zapis ręczny i automatyczny przy zakończeniu/resetowaniu,
+- eksport archiwum JSON, raport CSV i sterowany czasem Replay tras.
 
 ## Testy
 
@@ -38,7 +43,7 @@ $env:Path = 'C:\Program Files\nodejs;' + $env:Path
 & 'C:\Program Files\nodejs\npm.cmd' run check
 ```
 
-Testy integracyjne uruchamiają osobne serwery i sprawdzają logowanie, duplikaty kryptonimów, prywatność obu drużyn, start gry, timer, SOS, wiele sesji, zmianę kodu oraz blokowanie funkcji.
+Testy integracyjne uruchamiają osobne serwery i sprawdzają również drużyny, limity miejsc, role i ich zdolności, presety, wiadomości dowódcy, pomoc medyka, indywidualny respawn, ewakuację VIP i archiwa. `npm run qa:visual` uruchamia Edge i kontroluje układ paneli na komputerze oraz telefonie.
 
 ## Docker
 
@@ -75,7 +80,7 @@ Bezpłatna instancja Render usypia się po okresie bezczynności, dlatego pierws
 
 Po zaakceptowaniu zgód pozycja jest wysyłana organizatorowi już w lobby, dzięki czemu można sprawdzić urządzenia przed rozpoczęciem gry. Aplikacja najpierw próbuje dokładnego GPS, następnie automatycznie przełącza się na tryb zgodny i ponawia połączenie. Mapa używa domyślnie zdjęć satelitarnych Esri z wymaganym przypisaniem źródła oraz nakładki UTM/MGRS.
 
-Administrator może zmienić drużynę uczestnika w zakładce `Uczestnicy` do momentu rozpoczęcia gry. W górnym pasku przełącza aktywną sesję, a w `Ustawieniach` tworzy kolejne sesje, zmienia ich kody i steruje 20 funkcjami. Granicę edytuje się w `Ustawieniach`: kliknięcie dodaje punkt, przeciągnięcie zielonego uchwytu przesuwa punkt, a wyczyszczenie punktów nie zmienia widoku mapy. Na komputerze bez odbiornika GPS można utworzyć obszar wokół ręcznie ustawionego środka mapy.
+Administrator może zmienić stronę, drużynę operacyjną i rolę uczestnika w zakładce `Uczestnicy`. W `Drużyny i role` zarządza strukturą oddziałów oraz funkcjonalnymi zdolnościami. W `Ustawienia → Presety` może przygotować całą operację jednym kliknięciem, a w `Archiwum` zapisać i pobrać pełny przebieg. Granicę edytuje się w `Ustawieniach`: kliknięcie dodaje punkt, przeciągnięcie zielonego uchwytu przesuwa punkt, a wyczyszczenie punktów nie zmienia widoku mapy. Na komputerze bez odbiornika GPS można utworzyć obszar wokół ręcznie ustawionego środka mapy.
 
 Mapa zapamiętuje ręczne przesunięcie i zbliżenie osobno dla każdego widoku i każdej sesji. Automatyczne wyśrodkowanie następuje przy pierwszym otwarciu oraz po rozpoczęciu gry; późniejsze aktualizacje GPS nie przejmują sterowania kamerą.
 

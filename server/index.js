@@ -35,7 +35,9 @@ const DEFAULT_FEATURES = Object.freeze({
   fogOfWar: false, medicSystem: false, ammoLogistics: false,
   mgrsAdmin: true, mgrsStaff: true, mgrsPlayer: true,
   routeReplay: true, modeIntel: true, zoneInteractions: true, stateAwareMarkers: true,
-  messageNotifications: true, sosBroadcastAlarms: true
+  messageNotifications: true, sosBroadcastAlarms: true,
+  teamOperations: true, roleAbilities: true, commanderBroadcast: true,
+  autoSessionArchive: true
 });
 const FEATURE_KEYS = Object.keys(DEFAULT_FEATURES);
 const STAFF_PERMISSIONS = Object.freeze([
@@ -67,6 +69,33 @@ const GAME_MODES = Object.freeze({
 });
 const DEFAULT_MODE = 'CLASSIC_SERE';
 const defaultModeSettings = mode => structuredClone(GAME_MODES[mode || DEFAULT_MODE].defaults);
+const ROLE_CAPABILITIES = Object.freeze([
+  'TEAM_MAP','COMMAND','REVIVE','BOMB_SPECIALIST','RECON','EXTRACTION_TARGET',
+  'CHECKPOINT_OPERATOR','RESPAWN_MANAGER','OBJECTIVE_OPERATOR','SAFETY_OVERRIDE'
+]);
+const BUILTIN_ROLES = Object.freeze([
+  { code:'OPERATOR', name:'Operator', icon:'OP', color:'#dce5e8', description:'Podstawowa rola liniowa bez specjalnych uprawnień.', capabilities:[], active:true },
+  { code:'COMMANDER', name:'Dowódca', icon:'DC', color:'#ffc247', description:'Widzi stronę na mapie i może nadawać komunikaty do swojej strony.', capabilities:['TEAM_MAP','COMMAND'], active:true },
+  { code:'MEDIC', name:'Medyk', icon:'MD', color:'#43e58d', description:'Może przywrócić pobliskiego członka swojej strony do walki.', capabilities:['REVIVE'], active:true },
+  { code:'ENGINEER', name:'Saper', icon:'SP', color:'#ff8b45', description:'Podkłada i rozbraja ładunki o 35% szybciej.', capabilities:['BOMB_SPECIALIST','OBJECTIVE_OPERATOR'], active:true },
+  { code:'VIP', name:'VIP', icon:'VIP', color:'#d69cff', description:'Kluczowy cel eskorty i ewakuacji.', capabilities:['EXTRACTION_TARGET'], active:true },
+  { code:'CONVOY', name:'Operator konwoju', icon:'CV', color:'#62a8ff', description:'Obsługuje trasę i checkpointy konwoju.', capabilities:['CHECKPOINT_OPERATOR'], active:true },
+  { code:'SCOUT', name:'Zwiadowca', icon:'ZW', color:'#5ee7d4', description:'Rola rozpoznawcza z widocznością własnego zespołu.', capabilities:['RECON'], active:true },
+  { code:'REFEREE', name:'Sędzia polowy', icon:'RF', color:'#ff5d5d', description:'Nadzoruje bezpieczeństwo i może zarządzać respawnem.', capabilities:['RESPAWN_MANAGER','SAFETY_OVERRIDE'], active:true }
+]);
+const defaultRoles = () => structuredClone(BUILTIN_ROLES);
+const defaultTeams = () => [
+  { id:crypto.randomUUID(), code:'SERE-ALFA', name:'SERE Alfa', side:'SERE', color:'#a3ff4f', mapSharing:'SQUAD', respawnSeconds:null, maxPlayers:100, radioChannel:'SERE-1', active:true, allowedRoles:BUILTIN_ROLES.map(role=>role.code) },
+  { id:crypto.randomUUID(), code:'OPFOR-BRAWO', name:'OPFOR Brawo', side:'OPFOR', color:'#ff8a45', mapSharing:'SQUAD', respawnSeconds:null, maxPlayers:100, radioChannel:'OPFOR-1', active:true, allowedRoles:BUILTIN_ROLES.map(role=>role.code) }
+];
+const SESSION_PRESETS = Object.freeze({
+  SERE_HUNT:{ name:'SERE — długie polowanie', icon:'SR', description:'Skryta rozgrywka, pojedyncze życie i ograniczona widoczność.', mode:'CLASSIC_SERE', durationMinutes:240, sereTimerSeconds:20, opforTimerSeconds:60, features:{ fogOfWar:true, stealthMode:true, opforTeamMap:true, medicSystem:false }, modeSettings:{ lives:1, respawnZoneRequired:false } },
+  BOMB_TACTICAL:{ name:'Ładunek — taktyczny', icon:'BD', description:'Szybkie rundy, saperzy i interaktywne strefy ładunków.', mode:'BOMB_DEFUSAL', durationMinutes:60, sereTimerSeconds:15, opforTimerSeconds:15, features:{ roleAbilities:true, zoneInteractions:true, objectives:true }, modeSettings:{ lives:1, respawnSeconds:45, modeRules:{ plantSeconds:15, defuseSeconds:20, bombTimerSeconds:240, roundsToWin:4 } } },
+  DOMINATION_FAST:{ name:'Dominacja — dynamiczna', icon:'DM', description:'Trzy strefy, szybki respawn i wynik na żywo.', mode:'DOMINATION', durationMinutes:90, sereTimerSeconds:15, opforTimerSeconds:15, features:{ scoreBoard:true, modeIntel:true, automaticCheckpoints:true }, modeSettings:{ respawnSeconds:30, scoreLimit:500, modeRules:{ captureSeconds:30, pointsPerMinute:15, zonesToWin:3 } } },
+  CONVOY_COMMAND:{ name:'Konwój — dowodzenie', icon:'CV', description:'Widoczność zespołów, checkpointy i łączność dowódcza.', mode:'CONVOY_AMBUSH', durationMinutes:150, sereTimerSeconds:30, opforTimerSeconds:30, features:{ commanderBroadcast:true, automaticCheckpoints:true, teamOperations:true }, modeSettings:{ lives:3, modeRules:{ convoyLives:3, ambushDelayMinutes:10 } } },
+  MEDICAL_MISSION:{ name:'Misja medyczna', icon:'MD', description:'Rozbudowany respawn, medycy i ewakuacja rannych.', mode:'MEDIC_RESCUE', durationMinutes:180, sereTimerSeconds:25, opforTimerSeconds:25, features:{ medicSystem:true, roleAbilities:true, respawnZones:true }, modeSettings:{ hitsToRespawn:2, respawnSeconds:120, modeRules:{ bleedoutSeconds:300, reviveSeconds:45, medicLives:3 } } },
+  MILSIM_COMMAND:{ name:'MILSIM — pełne dowodzenie', icon:'C2', description:'Role, drużyny, MGRS, replay, archiwizacja i rozbudowana telemetria.', mode:'SEARCH_RESCUE', durationMinutes:360, sereTimerSeconds:30, opforTimerSeconds:45, features:{ teamOperations:true, roleAbilities:true, commanderBroadcast:true, mgrsGrid:true, routeReplay:true, autoSessionArchive:true, stateAwareMarkers:true, fovPrediction:true, compassSharing:true }, modeSettings:{ lives:2, respawnSeconds:120, fovRange:220, fovAngle:75 } }
+});
 
 const app = express();
 const server = http.createServer(app);
@@ -86,7 +115,7 @@ const boundary = [
 // Store demonstracyjny. Interfejs repozytorium jest celowo mały, aby podmienić go
 // na transakcje PostgreSQL zgodnie z server/schema.sql bez zmiany kontrolerów.
 const store = {
-  games: new Map(), participants: new Map(), staff: new Map(), events: [], messages: [], tracks: [], timers: new Map(), sos: new Map()
+  games: new Map(), participants: new Map(), staff: new Map(), events: [], messages: [], tracks: [], timers: new Map(), sos: new Map(), archives: []
 };
 const timerTimeouts = new Map();
 const zoneTimeouts = new Map();
@@ -98,7 +127,7 @@ function persistSoon() {
   persistenceTimer = setTimeout(() => {
     const payload = {
       games: [...store.games.values()], participants: [...store.participants.values()], staff: [...store.staff.values()],
-      events: store.events.slice(0, 10_000), messages: store.messages.slice(0, 10_000), tracks: store.tracks.slice(-100_000), timers: [...store.timers.values()], sos: [...store.sos.values()]
+      events: store.events.slice(0, 10_000), messages: store.messages.slice(0, 10_000), tracks: store.tracks.slice(-100_000), timers: [...store.timers.values()], sos: [...store.sos.values()], archives: store.archives.slice(0, 500)
     };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     const temporary = `${DATA_FILE}.tmp`;
@@ -114,7 +143,7 @@ function restoreState() {
       const mode = GAME_MODES[item.mode] ? item.mode : DEFAULT_MODE;
       const restoredSettings = { ...defaultModeSettings(mode), ...(item.modeSettings || {}) };
       restoredSettings.modeRules = { ...defaultModeSettings(mode).modeRules, ...(item.modeSettings?.modeRules || {}) };
-      store.games.set(item.id, { ...item, mode, modeSettings: restoredSettings, zones: item.zones || [], objectives: item.objectives || [], scores: { SERE: 0, OPFOR: 0, ...(item.scores || {}) }, features: { ...DEFAULT_FEATURES, ...(item.features || {}) } });
+      store.games.set(item.id, { ...item, mode, modeSettings: restoredSettings, zones: item.zones || [], objectives: item.objectives || [], teams: item.teams?.length ? item.teams : defaultTeams(), roles: item.roles?.length ? item.roles : defaultRoles(), scores: { SERE: 0, OPFOR: 0, ...(item.scores || {}) }, features: { ...DEFAULT_FEATURES, ...(item.features || {}) } });
     }
     for (const item of data.participants || []) {
       item.activeTimer = null;
@@ -124,7 +153,7 @@ function restoreState() {
     for (const item of data.staff || []) store.staff.set(item.id, item);
     for (const item of data.timers || []) store.timers.set(item.id, { ...item, cancelledAt: item.cancelledAt || Date.now() });
     for (const item of data.sos || []) store.sos.set(item.id, item);
-    store.events = data.events || []; store.messages = data.messages || []; store.tracks = data.tracks || [];
+    store.events = data.events || []; store.messages = data.messages || []; store.tracks = data.tracks || []; store.archives = data.archives || [];
     return store.games.size > 0;
   } catch (error) {
     console.error('Nie udało się odczytać stanu lokalnego:', error.message);
@@ -137,7 +166,7 @@ if (!restored || !demoGame) {
   demoGame = {
     id: crypto.randomUUID(), code: 'WILK24', name: 'Operacja Nocny Wilk', state: 'LOBBY',
     durationMinutes: 1440, sereTimerSeconds: 20, opforTimerSeconds: 60, boundary,
-    mode: DEFAULT_MODE, modeSettings: defaultModeSettings(DEFAULT_MODE), zones: [], objectives: [], scores: { SERE: 0, OPFOR: 0 }, features: { ...DEFAULT_FEATURES },
+    mode: DEFAULT_MODE, modeSettings: defaultModeSettings(DEFAULT_MODE), zones: [], objectives: [], teams: defaultTeams(), roles: defaultRoles(), scores: { SERE: 0, OPFOR: 0 }, features: { ...DEFAULT_FEATURES },
     startedAt: null, finishedAt: null, createdAt: new Date().toISOString()
   };
   store.games.set(demoGame.id, demoGame);
@@ -156,6 +185,8 @@ function makeGame({ code, name, source = demoGame }) {
     modeSettings: { ...defaultModeSettings(source?.mode || DEFAULT_MODE), ...(source?.modeSettings || {}), modeRules: { ...defaultModeSettings(source?.mode || DEFAULT_MODE).modeRules, ...(source?.modeSettings?.modeRules || {}) } },
     zones: (source?.zones || []).map(zone => ({ ...zone, center: [...zone.center], points: zone.points?.map(point => [...point]) })),
     objectives: (source?.objectives || []).map(objective => ({ ...objective })),
+    teams: (source?.teams?.length ? source.teams : defaultTeams()).map(team => ({ ...team, id:crypto.randomUUID(), allowedRoles:[...(team.allowedRoles || [])] })),
+    roles: (source?.roles?.length ? source.roles : defaultRoles()).map(role => ({ ...role, capabilities:[...(role.capabilities || [])] })),
     scores: { SERE: 0, OPFOR: 0 },
     features: { ...DEFAULT_FEATURES, ...(source?.features || {}) },
     startedAt: null, pausedAt: null, finishedAt: null, createdAt: new Date().toISOString()
@@ -165,6 +196,7 @@ function makeGame({ code, name, source = demoGame }) {
 const joinSchema = z.object({
   callsign: z.string().trim().min(2).max(24).regex(/^[\p{L}\p{N}_ -]+$/u),
   team: z.enum(['SERE', 'OPFOR']),
+  squadId: z.string().uuid().nullable().optional(),
   consent: z.literal(true),
   consentVersion: z.string().default('2026-07-11')
 });
@@ -217,9 +249,21 @@ const createGameSchema = z.object({
 });
 const participantUpdateSchema = z.object({
   status: z.enum(['WAITING','READY','ACTIVE','TIMER','RESPAWN_WAIT','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED']).optional(),
-  team: z.enum(['SERE','OPFOR']).optional(), role: z.enum(['OPERATOR','COMMANDER','MEDIC','ENGINEER','VIP','CONVOY','SCOUT','REFEREE']).optional(),
+  team: z.enum(['SERE','OPFOR']).optional(), role: z.string().trim().min(2).max(24).regex(/^[A-Z0-9_-]+$/).optional(), squadId: z.string().uuid().nullable().optional(),
   hitCount: z.number().int().min(0).max(100).optional(), respawnRequired: z.boolean().optional(), mapAccess: z.boolean().optional()
 }).refine(value => Object.keys(value).length > 0);
+const teamSchema = z.object({
+  id:z.string().uuid(), code:z.string().trim().min(2).max(16).regex(/^[A-Za-z0-9_-]+$/).transform(value=>value.toUpperCase()),
+  name:z.string().trim().min(2).max(50), side:z.enum(['SERE','OPFOR']), color:z.string().regex(/^#[0-9a-f]{6}$/i),
+  mapSharing:z.enum(['NONE','SQUAD','SIDE']), respawnSeconds:z.number().int().min(5).max(1800).nullable(),
+  maxPlayers:z.number().int().min(1).max(500), radioChannel:z.string().trim().max(30), active:z.boolean(),
+  allowedRoles:z.array(z.string().trim().min(2).max(24)).max(50)
+});
+const roleSchema = z.object({
+  code:z.string().trim().min(2).max(24).regex(/^[A-Za-z0-9_-]+$/).transform(value=>value.toUpperCase()),
+  name:z.string().trim().min(2).max(50), icon:z.string().trim().min(1).max(4), color:z.string().regex(/^#[0-9a-f]{6}$/i),
+  description:z.string().trim().max(300), capabilities:z.array(z.enum(ROLE_CAPABILITIES)).max(ROLE_CAPABILITIES.length), active:z.boolean()
+});
 const permissionSchema = z.array(z.enum(STAFF_PERMISSIONS)).max(STAFF_PERMISSIONS.length);
 const createStaffSchema = z.object({
   gameId: z.string().uuid(), username: z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.-]+$/).transform(value => value.toLowerCase()),
@@ -251,10 +295,15 @@ function event(gameId, type, details = {}, participantId = null, severity = 'INF
   const item = { id: crypto.randomUUID(), gameId, participantId, type, severity, details, createdAt: new Date().toISOString() };
   store.events.unshift(item); io.to(`game:${gameId}:staff`).emit('event:new', item); persistSoon(); return item;
 }
+function participantRole(game, participant) { return game?.roles?.find(role => role.code === (participant?.role || 'OPERATOR')) || BUILTIN_ROLES.find(role => role.code === (participant?.role || 'OPERATOR')) || BUILTIN_ROLES[0]; }
+function participantCapabilities(game, participant) { return feature(game, 'roleAbilities') ? (participantRole(game, participant)?.capabilities || []) : []; }
+function participantTeam(game, participant) { return game?.teams?.find(team => team.id === participant?.squadId) || null; }
+function participantRespawnSeconds(game, participant) { return participantTeam(game, participant)?.respawnSeconds || game?.modeSettings?.respawnSeconds || 60; }
 function participantView(p) {
   const { token, ...safe } = p;
   const timer = p.activeTimer ? store.timers.get(p.activeTimer) : null;
-  return { ...safe, timerEnd: timer?.endsAt || null };
+  const game = store.games.get(p.gameId);
+  return { ...safe, timerEnd: timer?.endsAt || null, capabilities:participantCapabilities(game, p) };
 }
 function staffView(account) { const { passwordHash, ...safe } = account; return safe; }
 function feature(game, key) { return game?.features?.[key] ?? DEFAULT_FEATURES[key] ?? true; }
@@ -268,6 +317,14 @@ function visibleParticipants(gameId, viewer) {
     if (viewer.role === 'STAFF' && can(viewer, 'VIEW_TEAM_PLAYERS')) return viewer.team === 'ALL' || p.team === viewer.team;
     if (p.activeSos) return true;
     if (p.id === viewer.participantId) return true;
+    if (viewer.role === 'PARTICIPANT' && currentViewer && p.team === currentViewer.team) {
+      const capabilities = participantCapabilities(game, currentViewer);
+      if (capabilities.includes('TEAM_MAP') || capabilities.includes('COMMAND') || capabilities.includes('REVIVE') || capabilities.includes('RECON') || capabilities.includes('RESPAWN_MANAGER')) return true;
+      const squad = participantTeam(game, currentViewer);
+      if (squad?.mapSharing === 'SIDE') return true;
+      if (squad?.mapSharing === 'SQUAD') return Boolean(currentViewer.squadId && p.squadId === currentViewer.squadId);
+      if (squad?.mapSharing === 'NONE') return false;
+    }
     return feature(game, 'opforTeamMap') && effectiveTeam === 'OPFOR' && p.team === 'OPFOR';
   }).map(p => {
     const view = participantView(p);
@@ -345,7 +402,7 @@ function updateActiveTimerDurations(game, changes) {
     if (timer.gameId !== game.id || timer.completedAt) continue;
     const p = store.participants.get(timer.participantId); if (!p) continue;
     const kind = timer.kind || (p.respawnRequired ? 'RESPAWN' : p.team === 'SERE' ? 'SERE' : 'OPFOR');
-    const seconds = kind === 'RESPAWN' ? changes.modeSettings?.respawnSeconds : kind === 'SERE' ? changes.sereTimerSeconds : changes.opforTimerSeconds;
+    const seconds = kind === 'RESPAWN' ? (participantTeam(game, p)?.respawnSeconds || changes.modeSettings?.respawnSeconds) : kind === 'SERE' ? changes.sereTimerSeconds : changes.opforTimerSeconds;
     if (!Number.isFinite(seconds)) continue;
     timer.kind = kind; timer.seconds = seconds; timer.endsAt = timer.startedAt + seconds * 1000; scheduleTimer(timer);
   }
@@ -369,6 +426,24 @@ function gameForViewer(game, viewer) {
     return { ...zone, carrierParticipantId: null };
   }) };
 }
+function archiveSummary(archive) {
+  return { id:archive.id, gameId:archive.gameId, label:archive.label, automatic:archive.automatic, createdAt:archive.createdAt, participantCount:archive.participants.length, eventCount:archive.events.length, messageCount:archive.messages.length, trackCount:archive.tracks.length, state:archive.game.state, mode:archive.game.mode };
+}
+function createArchive(game, label = '', automatic = false) {
+  const createdAt = new Date().toISOString();
+  const archive = {
+    id:crypto.randomUUID(), gameId:game.id, label:label.trim() || `${game.code} · ${new Date().toLocaleString('pl-PL')}`, automatic, createdAt,
+    game:structuredClone(game),
+    participants:[...store.participants.values()].filter(item=>item.gameId===game.id).map(item=>participantView(item)),
+    events:structuredClone(store.events.filter(item=>item.gameId===game.id)),
+    messages:structuredClone(store.messages.filter(item=>item.gameId===game.id)),
+    tracks:structuredClone(store.tracks.filter(item=>item.gameId===game.id)),
+    sos:structuredClone([...store.sos.values()].filter(item=>item.gameId===game.id))
+  };
+  store.archives.unshift(archive); if (store.archives.length > 500) store.archives.length = 500;
+  event(game.id, 'SESSION_ARCHIVED', { archiveId:archive.id, label:archive.label, automatic }); persistSoon();
+  return archive;
+}
 function snapshot(gameId, viewer) {
   viewer = effectiveViewer(viewer);
   const isStaff = viewer.role === 'STAFF';
@@ -380,17 +455,19 @@ function snapshot(gameId, viewer) {
     messages: visibleMessages(gameId, viewer),
     contacts: [...store.staff.values()].filter(account => account.gameId === gameId && account.active && account.permissions.includes('RECEIVE_PLAYER_MESSAGES')).map(account => ({ id: account.id, callsign: account.callsign, title: account.title, team: account.team })),
     staff: viewer.role === 'ADMIN' ? [...store.staff.values()].filter(account => account.gameId === gameId).map(staffView) : undefined,
-    currentStaff: isStaff ? staffView(store.staff.get(viewer.staffId)) : undefined
+    currentStaff: isStaff ? staffView(store.staff.get(viewer.staffId)) : undefined,
+    archives: viewer.role === 'ADMIN' || can(viewer, 'VIEW_REPORTS') ? store.archives.filter(item=>item.gameId===gameId).map(archiveSummary) : undefined
   };
 }
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, now: new Date().toISOString(), sockets: io.engine.clientsCount }));
 app.get('/api/game-modes', (_req, res) => res.json(GAME_MODES));
+app.get('/api/presets', (_req, res) => res.json(SESSION_PRESETS));
 app.get('/api/permissions', auth, requireRole('ADMIN'), (_req, res) => res.json(STAFF_PERMISSIONS));
 app.get('/api/games/:code/public', (req, res) => {
   const game = gameByCode(req.params.code);
   if (!game) return res.status(404).json({ error: 'Nie znaleziono sesji.' });
-  res.json({ id: game.id, code: game.code, name: game.name, state: game.state, mode: game.mode, modeSettings: game.modeSettings, features: game.features, participantCount: [...store.participants.values()].filter(p => p.gameId === game.id).length });
+  res.json({ id: game.id, code: game.code, name: game.name, state: game.state, mode: game.mode, modeSettings: game.modeSettings, features: game.features, teams:(game.teams||[]).filter(team=>team.active), roles:(game.roles||[]).filter(role=>role.active), participantCount: [...store.participants.values()].filter(p => p.gameId === game.id).length });
 });
 app.get('/api/games', auth, requireRole('ADMIN'), (_req, res) => {
   res.json([...store.games.values()].map(game => ({
@@ -455,10 +532,13 @@ app.post('/api/games/:code/join', (req, res) => {
   if (!game || !['LOBBY', 'DRAFT'].includes(game.state) || !feature(game, 'allowJoining')) return res.status(409).json({ error: 'Do tej sesji nie można teraz dołączyć.' });
   const normalized = parsed.data.callsign.toLocaleUpperCase('pl-PL');
   const duplicate = [...store.participants.values()].some(p => p.gameId === game.id && p.normalizedCallsign === normalized);
+  const squad = parsed.data.squadId ? game.teams?.find(team=>team.id===parsed.data.squadId) : null;
+  if (parsed.data.squadId && (!squad || !squad.active || squad.side !== parsed.data.team)) return res.status(409).json({ error: 'Wybrana drużyna operacyjna nie jest dostępna dla tej strony.' });
+  if (squad && [...store.participants.values()].filter(item=>item.gameId===game.id && item.squadId===squad.id && item.status!=='REMOVED').length >= squad.maxPlayers) return res.status(409).json({ error: 'Wybrana drużyna osiągnęła limit uczestników.' });
   if (duplicate) return res.status(409).json({ error: 'Ten kryptonim jest już zajęty.' });
   const participant = {
     id: crypto.randomUUID(), gameId: game.id, callsign: parsed.data.callsign, normalizedCallsign: normalized,
-    team: parsed.data.team, role: 'OPERATOR', status: 'READY', consentVersion: parsed.data.consentVersion,
+    team: parsed.data.team, squadId:squad?.id || null, role: 'OPERATOR', status: 'READY', consentVersion: parsed.data.consentVersion,
     consentedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), location: null,
     timerCount: 0, boundaryCount: 0, hitCount: 0, respawnCount: 0, respawnRequired: false, activeSos: false, mapAccess: true
   };
@@ -473,6 +553,29 @@ app.get('/api/state', auth, (req, res) => {
   const game = store.games.get(gameId);
   if (!game) return res.status(404).json({ error: 'Nie znaleziono sesji.' });
   res.json(snapshot(gameId, req.auth));
+});
+app.get('/api/games/:id/archives', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  const game=store.games.get(req.params.id);
+  if (!game) return res.status(404).json({ error:'Nie znaleziono sesji.' });
+  if (req.auth.role==='STAFF' && (req.auth.gameId!==game.id || !can(req.auth,'VIEW_REPORTS'))) return res.status(403).json({ error:'Brak uprawnienia do archiwów.' });
+  res.json(store.archives.filter(item=>item.gameId===game.id).map(archiveSummary));
+});
+app.post('/api/games/:id/archives', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  const game=store.games.get(req.params.id), parsed=z.object({ label:z.string().trim().max(100).optional() }).safeParse(req.body||{});
+  if (!game || !parsed.success) return res.status(400).json({ error:'Nieprawidłowy zapis sesji.' });
+  if (req.auth.role==='STAFF' && (req.auth.gameId!==game.id || !can(req.auth,'EXPORT_REPORTS'))) return res.status(403).json({ error:'Brak uprawnienia do zapisu archiwum.' });
+  res.status(201).json(archiveSummary(createArchive(game,parsed.data.label,false)));
+});
+app.get('/api/games/:id/archives/:archiveId', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  const archive=store.archives.find(item=>item.id===req.params.archiveId && item.gameId===req.params.id);
+  if (!archive) return res.status(404).json({ error:'Nie znaleziono archiwum.' });
+  if (req.auth.role==='STAFF' && (req.auth.gameId!==archive.gameId || !can(req.auth,'VIEW_REPORTS'))) return res.status(403).json({ error:'Brak uprawnienia do archiwum.' });
+  res.json(archive);
+});
+app.delete('/api/games/:id/archives/:archiveId', auth, requireRole('ADMIN'), (req, res) => {
+  const index=store.archives.findIndex(item=>item.id===req.params.archiveId && item.gameId===req.params.id);
+  if (index<0) return res.status(404).json({ error:'Nie znaleziono archiwum.' });
+  const [removed]=store.archives.splice(index,1); event(req.params.id,'SESSION_ARCHIVE_DELETED',{ archiveId:removed.id, label:removed.label },null,'WARNING'); persistSoon(); res.status(204).end();
 });
 app.get('/api/games/:id/replay', auth, requireRole('ADMIN','STAFF'), (req, res) => {
   const game = store.games.get(req.params.id);
@@ -519,6 +622,39 @@ app.patch('/api/games/:id/code', auth, requireRole('ADMIN'), (req, res) => {
   if ([...store.games.values()].some(item => item.id !== game.id && item.code === parsed.data.code)) return res.status(409).json({ error: 'Ten kod sesji jest już używany.' });
   const previousCode = game.code; game.code = parsed.data.code; event(game.id, 'SESSION_CODE_CHANGED', { previousCode, code: game.code }); broadcastState(game.id); res.json(game);
 });
+app.patch('/api/games/:id/teams', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  const parsed = z.object({ teams:z.array(teamSchema).max(30) }).safeParse(req.body), game = store.games.get(req.params.id);
+  if (!parsed.success || !game) return res.status(400).json({ error:'Nieprawidłowa konfiguracja drużyn.', issues:parsed.error?.issues });
+  if (req.auth.role==='STAFF' && (req.auth.gameId!==game.id || !can(req.auth,'MANAGE_TEAMS'))) return res.status(403).json({ error:'Brak uprawnienia do drużyn.' });
+  if (new Set(parsed.data.teams.map(team=>team.id)).size!==parsed.data.teams.length || new Set(parsed.data.teams.map(team=>team.code)).size!==parsed.data.teams.length) return res.status(409).json({ error:'Identyfikatory i kody drużyn muszą być unikalne.' });
+  const roleCodes = new Set((game.roles||[]).map(role=>role.code));
+  if (parsed.data.teams.some(team=>team.allowedRoles.some(role=>!roleCodes.has(role)))) return res.status(409).json({ error:'Drużyna odwołuje się do nieistniejącej roli.' });
+  if (parsed.data.teams.some(team=>!team.allowedRoles.includes('OPERATOR'))) return res.status(409).json({ error:'Każda drużyna musi dopuszczać rolę Operator, aby można było do niej dołączyć.' });
+  const nextIds = new Set(parsed.data.teams.map(team=>team.id));
+  const nextTeams=new Map(parsed.data.teams.map(team=>[team.id,team]));
+  for (const participant of store.participants.values()) if (participant.gameId===game.id && participant.squadId && (!nextIds.has(participant.squadId)||nextTeams.get(participant.squadId)?.side!==participant.team)) participant.squadId=null;
+  game.teams=parsed.data.teams;
+  event(game.id,'TEAMS_CHANGED',{ count:game.teams.length }); broadcastState(game.id); res.json(game);
+});
+app.patch('/api/games/:id/roles', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  const parsed = z.object({ roles:z.array(roleSchema).min(1).max(50) }).safeParse(req.body), game = store.games.get(req.params.id);
+  if (!parsed.success || !game) return res.status(400).json({ error:'Nieprawidłowa konfiguracja ról.', issues:parsed.error?.issues });
+  if (req.auth.role==='STAFF' && (req.auth.gameId!==game.id || !can(req.auth,'MANAGE_TEAMS'))) return res.status(403).json({ error:'Brak uprawnienia do ról.' });
+  if (new Set(parsed.data.roles.map(role=>role.code)).size!==parsed.data.roles.length || !parsed.data.roles.some(role=>role.code==='OPERATOR' && role.active)) return res.status(409).json({ error:'Kody ról muszą być unikalne, a aktywna rola OPERATOR jest wymagana.' });
+  const codes = new Set(parsed.data.roles.map(role=>role.code));
+  for (const participant of store.participants.values()) if (participant.gameId===game.id && !codes.has(participant.role||'OPERATOR')) participant.role='OPERATOR';
+  game.teams=(game.teams||[]).map(team=>({ ...team, allowedRoles:team.allowedRoles.filter(code=>codes.has(code)) }));
+  game.roles=parsed.data.roles;
+  event(game.id,'ROLES_CHANGED',{ count:game.roles.length }); broadcastState(game.id); res.json(game);
+});
+app.post('/api/games/:id/presets/:key/apply', auth, requireRole('ADMIN'), (req, res) => {
+  const game=store.games.get(req.params.id), preset=SESSION_PRESETS[req.params.key];
+  if (!game || !preset) return res.status(404).json({ error:'Nie znaleziono sesji lub presetu.' });
+  if (game.state==='ACTIVE') return res.status(409).json({ error:'Wstrzymaj grę przed zastosowaniem presetu.' });
+  const defaults=defaultModeSettings(preset.mode), modeSettings={ ...defaults, ...(preset.modeSettings||{}), modeRules:{ ...defaults.modeRules, ...(preset.modeSettings?.modeRules||{}) } };
+  Object.assign(game,{ mode:preset.mode, modeSettings, durationMinutes:preset.durationMinutes, sereTimerSeconds:preset.sereTimerSeconds, opforTimerSeconds:preset.opforTimerSeconds, features:{ ...game.features, ...(preset.features||{}) } });
+  event(game.id,'SESSION_PRESET_APPLIED',{ key:req.params.key, name:preset.name }); broadcastState(game.id); res.json(game);
+});
 app.patch('/api/games/:id/zones', auth, requireRole('ADMIN','STAFF'), (req, res) => {
   const parsed = z.object({ zones: z.array(zoneSchema).max(100) }).safeParse(req.body), game = store.games.get(req.params.id);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowe strefy.' });
@@ -552,7 +688,8 @@ app.post('/api/zones/:id/interact', auth, requireRole('PARTICIPANT'), (req, res)
     const state = zone.bombState || 'IDLE';
     if (p.team === attackerTeam) {
       if (state !== 'IDLE') return res.status(409).json({ error: state === 'PLANTED' || state === 'DEFUSING' ? 'Ładunek jest już podłożony.' : state === 'PLANTING' ? 'Podkładanie ładunku już trwa.' : 'Ta strefa została już rozstrzygnięta.' });
-      const seconds = Math.max(1, Number(game.modeSettings?.modeRules?.plantSeconds || 15));
+      const specialist = participantCapabilities(game,p).includes('BOMB_SPECIALIST');
+      const seconds = Math.max(1, Math.ceil(Number(game.modeSettings?.modeRules?.plantSeconds || 15) * (specialist ? 0.65 : 1)));
       Object.assign(zone, { bombState:'PLANTING', bombAttackerTeam:attackerTeam, plantedByParticipantId:p.id, plantStartedAt:Date.now(), plantEndsAt:Date.now() + seconds * 1000, bombPlantedAt:null, bombEndsAt:null, defuseStartedAt:null, defuseEndsAt:null, defusedByParticipantId:null });
       clearTimeout(bombTimeouts.get(`${zone.id}:plant`));
       bombTimeouts.set(`${zone.id}:plant`, setTimeout(() => {
@@ -581,7 +718,8 @@ app.post('/api/zones/:id/interact', auth, requireRole('PARTICIPANT'), (req, res)
     }
     if (p.team === defenderTeam) {
       if (state !== 'PLANTED') return res.status(409).json({ error: state === 'DEFUSING' ? 'Rozbrajanie ładunku już trwa.' : state === 'PLANTING' ? 'Ładunek nie został jeszcze podłożony.' : 'W tej strefie nie ma aktywnego ładunku.' });
-      const seconds = Math.max(1, Number(game.modeSettings?.modeRules?.defuseSeconds || 20));
+      const specialist = participantCapabilities(game,p).includes('BOMB_SPECIALIST');
+      const seconds = Math.max(1, Math.ceil(Number(game.modeSettings?.modeRules?.defuseSeconds || 20) * (specialist ? 0.65 : 1)));
       Object.assign(zone, { bombState:'DEFUSING', defusedByParticipantId:p.id, defuseStartedAt:Date.now(), defuseEndsAt:Date.now() + seconds * 1000 });
       clearTimeout(bombTimeouts.get(`${zone.id}:defuse`));
       bombTimeouts.set(`${zone.id}:defuse`, setTimeout(() => {
@@ -636,14 +774,25 @@ app.post('/api/zones/:id/interact', auth, requireRole('PARTICIPANT'), (req, res)
     const checkpoints = game.zones.filter(item => item.type === 'CHECKPOINT' && (item.team === 'ALL' || item.team === p.team)).sort((a,b) => (a.sequence || 999) - (b.sequence || 999));
     const next = checkpoints.find(item => item.completedByTeam !== p.team);
     if (next?.id !== zone.id) return res.status(409).json({ error: `Najpierw osiągnij checkpoint ${next?.sequence || 1}.` });
-    zone.completedByTeam = p.team; zone.completedAt = Date.now(); game.scores[p.team] = (game.scores[p.team] || 0) + 1;
-    event(game.id, 'CHECKPOINT_REACHED', { callsign: p.callsign, team: p.team, zone: zone.name, sequence: zone.sequence }, p.id); broadcastState(game.id);
+    const specialist=participantCapabilities(game,p).includes('CHECKPOINT_OPERATOR'),points=specialist?2:1;
+    zone.completedByTeam = p.team; zone.completedAt = Date.now(); game.scores[p.team] = (game.scores[p.team] || 0) + points;
+    event(game.id, 'CHECKPOINT_REACHED', { callsign: p.callsign, team: p.team, zone: zone.name, sequence: zone.sequence, specialist, points }, p.id); broadcastState(game.id);
     return res.json({ action: 'CHECKPOINT_COMPLETED', zone, completed: checkpoints.filter(item => item.completedByTeam === p.team).length, total: checkpoints.length });
+  }
+  if (zone.type==='EXTRACTION' && participantCapabilities(game,p).includes('EXTRACTION_TARGET')) {
+    if (zone.team!=='ALL' && zone.team!==p.team) return res.status(403).json({ error:'Ta strefa ewakuacji należy do innej strony.' });
+    if (zone.completedAt) return res.status(409).json({ error:'Ewakuacja w tej strefie została już wykonana.' });
+    const points=game.mode==='VIP_ESCORT'?1:5;
+    Object.assign(zone,{ completedByTeam:p.team, completedAt:Date.now() }); p.status='FINISHED'; game.scores[p.team]=(game.scores[p.team]||0)+points;
+    event(game.id,'VIP_EXTRACTED',{ callsign:p.callsign, team:p.team, zone:zone.name },p.id,'WARNING'); broadcastState(game.id);
+    return res.json({ action:'VIP_EXTRACTED', zone, scores:game.scores });
   }
   const objective = game.objectives?.find(item => item.id === zone.objectiveId || item.zoneId === zone.id);
   if (objective && (objective.team === 'ALL' || objective.team === p.team)) {
-    objective.status = 'COMPLETED'; objective.progress = 100; game.scores[p.team] = (game.scores[p.team] || 0) + objective.points;
-    event(game.id, 'OBJECTIVE_COMPLETED', { callsign: p.callsign, team: p.team, objective: objective.name }, p.id); broadcastState(game.id);
+    if (objective.status==='COMPLETED') return res.status(409).json({ error:'Ten cel został już wykonany.' });
+    const specialist=participantCapabilities(game,p).includes('OBJECTIVE_OPERATOR'),points=Math.round(objective.points*(specialist?1.25:1));
+    objective.status = 'COMPLETED'; objective.progress = 100; game.scores[p.team] = (game.scores[p.team] || 0) + points;
+    event(game.id, 'OBJECTIVE_COMPLETED', { callsign: p.callsign, team: p.team, objective: objective.name, specialist, points }, p.id); broadcastState(game.id);
     return res.json({ action: 'OBJECTIVE_COMPLETED', zone, objective, scores: game.scores });
   }
   return res.json({ action: 'ZONE_CONFIRMED', zone });
@@ -660,9 +809,19 @@ app.patch('/api/participants/:id', auth, requireRole('ADMIN','STAFF'), (req, res
   const game = participant && store.games.get(participant.gameId);
   if (!parsed.success || !participant || !game) return res.status(400).json({ error: 'Nieprawidłowa zmiana uczestnika.' });
   if (req.auth.role === 'STAFF' && req.auth.gameId !== participant.gameId) return res.status(403).json({ error: 'Uczestnik należy do innej sesji.' });
-  if (req.auth.role === 'STAFF' && ['team','role'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_TEAMS')) return res.status(403).json({ error: 'Brak uprawnienia do zespołów i ról.' });
+  if (req.auth.role === 'STAFF' && ['team','role','squadId'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_TEAMS')) return res.status(403).json({ error: 'Brak uprawnienia do zespołów i ról.' });
   if (req.auth.role === 'STAFF' && ['status','hitCount','respawnRequired','mapAccess'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_PARTICIPANTS')) return res.status(403).json({ error: 'Brak uprawnienia do stanu uczestników.' });
   if (parsed.data.team && (game.state !== 'LOBBY' || !feature(game, 'allowTeamChanges'))) return res.status(409).json({ error: 'Zmiana drużyny jest wyłączona lub gra już się rozpoczęła.' });
+  const nextSide=parsed.data.team||participant.team;
+  const nextSquadId=parsed.data.squadId!==undefined?parsed.data.squadId:participant.squadId;
+  const squad=nextSquadId ? game.teams?.find(team=>team.id===nextSquadId) : null;
+  if (nextSquadId && (!squad || !squad.active || squad.side!==nextSide) && parsed.data.squadId!==undefined) return res.status(409).json({ error:'Wybrana drużyna operacyjna nie pasuje do strony uczestnika.' });
+  if (parsed.data.team && participant.squadId && !game.teams?.some(team=>team.id===participant.squadId && team.side===parsed.data.team)) parsed.data.squadId=null;
+  const nextRole=parsed.data.role||participant.role||'OPERATOR', role=game.roles?.find(item=>item.code===nextRole && item.active);
+  if (!role) return res.status(409).json({ error:'Wybrana rola nie jest aktywna w tej sesji.' });
+  const effectiveSquad=parsed.data.squadId===null?null:squad?.side===nextSide?squad:null;
+  if (effectiveSquad?.allowedRoles?.length && !effectiveSquad.allowedRoles.includes(nextRole)) return res.status(409).json({ error:'Ta rola nie jest dozwolona w wybranej drużynie.' });
+  if (effectiveSquad && parsed.data.squadId!==undefined && participant.squadId!==effectiveSquad.id && [...store.participants.values()].filter(item=>item.gameId===game.id&&item.squadId===effectiveSquad.id&&item.status!=='REMOVED').length>=effectiveSquad.maxPlayers) return res.status(409).json({ error:'Wybrana drużyna osiągnęła limit uczestników.' });
   Object.assign(participant, parsed.data);
   event(game.id, 'PARTICIPANT_CHANGED', { callsign: participant.callsign, ...parsed.data }, participant.id);
   broadcastState(game.id);
@@ -693,6 +852,20 @@ app.post('/api/locations', auth, requireRole('PARTICIPANT'), (req, res) => {
   }
   broadcastState(game.id); res.status(202).json({ accepted: true, outside });
 });
+app.post('/api/participants/:id/assist', auth, requireRole('PARTICIPANT'), (req, res) => {
+  const source=store.participants.get(req.auth.participantId), target=store.participants.get(req.params.id), game=store.games.get(source?.gameId);
+  if (!source || !target || !game || source.gameId!==target.gameId || source.team!==target.team || source.id===target.id) return res.status(404).json({ error:'Nie znaleziono członka drużyny do pomocy.' });
+  const capabilities=participantCapabilities(game,source),medic=feature(game,'medicSystem')&&capabilities.includes('REVIVE'),manager=capabilities.includes('RESPAWN_MANAGER');
+  if (!medic&&!manager) return res.status(403).json({ error:'Rola uczestnika nie pozwala na przywrócenie gracza.' });
+  if (game.state!=='ACTIVE' || !['CAPTURED','RESPAWN_WAIT','RESPAWN'].includes(target.status) && !target.respawnRequired) return res.status(409).json({ error:'Ten uczestnik nie wymaga obecnie pomocy.' });
+  const range=manager?50:30;
+  if (!source.location || !target.location || distanceMeters(source.location.latitude,source.location.longitude,target.location.latitude,target.location.longitude)>range) return res.status(409).json({ error:`Podejdź na odległość maksymalnie ${range} metrów.` });
+  if (source.lastAssistAt && Date.now()-source.lastAssistAt<10_000) return res.status(429).json({ error:'Odczekaj chwilę przed kolejną pomocą.' });
+  if (target.activeTimer) { const timer=store.timers.get(target.activeTimer); if(timer){timer.cancelledAt=Date.now();clearTimeout(timerTimeouts.get(timer.id));timerTimeouts.delete(timer.id);} target.activeTimer=null; }
+  Object.assign(target,{ status:'ACTIVE', respawnRequired:false, hitCount:0 }); source.lastAssistAt=Date.now();
+  event(game.id,manager?'RESPAWN_OVERRIDE':'PLAYER_REVIVED',{ operator:source.callsign, participant:target.callsign, squadId:source.squadId||null },target.id,'INFO'); broadcastState(game.id);
+  res.json({ participant:participantView(target), medic:participantView(source) });
+});
 app.post('/api/hits', auth, requireRole('PARTICIPANT'), (req, res) => {
   const p = store.participants.get(req.auth.participantId), game = store.games.get(p?.gameId);
   if (!p || !game || game.state !== 'ACTIVE' || !feature(game, 'hitTracking')) return res.status(409).json({ error: 'Rejestrowanie trafień jest teraz wyłączone.' });
@@ -706,7 +879,7 @@ app.post('/api/timers', auth, requireRole('PARTICIPANT'), (req, res) => {
   const p = store.participants.get(req.auth.participantId); const game = store.games.get(p?.gameId);
   if (!p || !game || !feature(game, 'timers') || game.state !== 'ACTIVE' || p.activeTimer) return res.status(409).json({ error: 'Timer nie może być teraz uruchomiony.' });
   if (p.respawnRequired && feature(game, 'respawnZones') && !inRespawnZone(game, p)) return res.status(409).json({ error: 'Wejdź do strefy respawnu swojej drużyny.' });
-  const seconds = p.respawnRequired ? (game.modeSettings?.respawnSeconds || 60) : p.team === 'SERE' ? game.sereTimerSeconds : game.opforTimerSeconds;
+  const seconds = p.respawnRequired ? participantRespawnSeconds(game,p) : p.team === 'SERE' ? game.sereTimerSeconds : game.opforTimerSeconds;
   const kind = p.respawnRequired ? 'RESPAWN' : p.team === 'SERE' ? 'SERE' : 'OPFOR';
   const timer = { id: crypto.randomUUID(), gameId: game.id, participantId: p.id, kind, seconds, startedAt: Date.now(), endsAt: Date.now() + seconds * 1000 };
   store.timers.set(timer.id, timer); p.activeTimer = timer.id; p.timerCount += 1; p.status = p.respawnRequired ? 'RESPAWN' : p.team === 'SERE' ? 'TIMER' : 'RESPAWN';
@@ -737,10 +910,14 @@ app.post('/api/messages', auth, requireRole('ADMIN','STAFF','PARTICIPANT'), (req
   const parsed = z.object({ gameId: z.string().uuid().optional(), audience: z.enum(['ALL','SERE','OPFOR','STAFF','PARTICIPANT']), body: z.string().trim().min(1).max(500), recipientStaffId: z.string().uuid().optional(), recipientParticipantId: z.string().uuid().optional() }).safeParse(req.body);
   const viewer = effectiveViewer(req.auth), gameId = viewer.gameId || parsed.data?.gameId, game = store.games.get(gameId);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowy komunikat.' });
-  if (viewer.role === 'PARTICIPANT' && (!feature(game, 'playerMessaging') || parsed.data.audience !== 'STAFF' || !parsed.data.recipientStaffId)) return res.status(403).json({ error: 'Gracz może pisać wyłącznie do dostępnego dowódcy.' });
+  const participantSender=viewer.role==='PARTICIPANT'?store.participants.get(viewer.participantId):null;
+  const teamBroadcast=Boolean(participantSender && feature(game,'commanderBroadcast') && participantCapabilities(game,participantSender).includes('COMMAND') && parsed.data.audience===participantSender.team);
+  if (viewer.role === 'PARTICIPANT' && (!feature(game, 'playerMessaging') || !teamBroadcast && (parsed.data.audience !== 'STAFF' || !parsed.data.recipientStaffId))) return res.status(403).json({ error: 'Ta rola nie może wysłać tego rodzaju komunikatu.' });
   if (viewer.role === 'PARTICIPANT') {
-    const recipient = store.staff.get(parsed.data.recipientStaffId);
-    if (!recipient || recipient.gameId !== gameId || !recipient.active || !recipient.permissions.includes('RECEIVE_PLAYER_MESSAGES')) return res.status(404).json({ error: 'Ten odbiorca nie jest już dostępny.' });
+    if (!teamBroadcast) {
+      const recipient = store.staff.get(parsed.data.recipientStaffId);
+      if (!recipient || recipient.gameId !== gameId || !recipient.active || !recipient.permissions.includes('RECEIVE_PLAYER_MESSAGES')) return res.status(404).json({ error: 'Ten odbiorca nie jest już dostępny.' });
+    }
   }
   if (viewer.role === 'STAFF') {
     const allowed = parsed.data.audience === 'ALL' ? can(viewer, 'SEND_ALL_MESSAGES') : ['SERE','OPFOR'].includes(parsed.data.audience) ? can(viewer, 'SEND_TEAM_MESSAGES') : can(viewer, 'SEND_DIRECT_MESSAGES');
@@ -756,6 +933,7 @@ app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requir
   if (!game) return res.status(404).json({ error: 'Nie znaleziono gry.' });
   if (req.auth.role === 'STAFF' && (req.auth.gameId !== game.id || !can(req.auth, 'MANAGE_GAME_STATE') || req.params.action === 'reset')) return res.status(403).json({ error: 'Brak uprawnienia do zmiany stanu gry.' });
   if (req.params.action === 'reset') {
+    if (feature(game,'autoSessionArchive') && [...store.participants.values()].some(item=>item.gameId===game.id)) createArchive(game,`${game.code} · przed resetem`,true);
     for (const [id, participant] of store.participants) if (participant.gameId === game.id) store.participants.delete(id);
     for (const [id, timer] of store.timers) if (timer.gameId === game.id) { clearTimeout(timerTimeouts.get(id)); timerTimeouts.delete(id); store.timers.delete(id); }
     for (const [id, alert] of store.sos) if (alert.gameId === game.id) store.sos.delete(id);
@@ -766,10 +944,12 @@ app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requir
     }
     store.events = store.events.filter(item => item.gameId !== game.id);
     store.messages = store.messages.filter(item => item.gameId !== game.id);
+    store.tracks = store.tracks.filter(item => item.gameId !== game.id);
     Object.assign(game, { state: 'LOBBY', startedAt: null, pausedAt: null, finishedAt: null, scores: { SERE: 0, OPFOR: 0 } });
     event(game.id, 'GAME_RESET', {});
     io.to(`game:${game.id}`).emit('game:changed', game); broadcastState(game.id); return res.json(game);
   }
+  const previousState=game.state;
   const next = { start: 'ACTIVE', pause: 'PAUSED', resume: 'ACTIVE', finish: 'FINISHED' }[req.params.action];
   game.state = next; game[`${req.params.action === 'finish' ? 'finished' : req.params.action === 'start' ? 'started' : req.params.action}At`] = new Date().toISOString();
   if (req.params.action === 'start' || req.params.action === 'resume') {
@@ -777,6 +957,7 @@ app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requir
   }
   if (req.params.action === 'finish') {
     for (const p of store.participants.values()) if (p.gameId === game.id) p.status = 'FINISHED';
+    if (previousState!=='FINISHED' && feature(game,'autoSessionArchive')) createArchive(game,`${game.code} · zakończenie`,true);
   }
   event(game.id, `GAME_${next}`, {}, null, next === 'FINISHED' ? 'WARNING' : 'INFO');
   io.to(`game:${game.id}`).emit('game:changed', game); broadcastState(game.id); res.json(game);

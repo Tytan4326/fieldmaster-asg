@@ -21,12 +21,41 @@ CREATE TABLE IF NOT EXISTS games (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS role_definitions (
+  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  code text NOT NULL,
+  name text NOT NULL,
+  icon text NOT NULL,
+  color text NOT NULL,
+  description text NOT NULL DEFAULT '',
+  capabilities jsonb NOT NULL DEFAULT '[]',
+  active boolean NOT NULL DEFAULT true,
+  PRIMARY KEY(game_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS operational_teams (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  code text NOT NULL,
+  name text NOT NULL,
+  side team NOT NULL,
+  color text NOT NULL,
+  map_sharing text NOT NULL DEFAULT 'SQUAD' CHECK (map_sharing IN ('NONE','SQUAD','SIDE')),
+  respawn_seconds integer CHECK (respawn_seconds BETWEEN 5 AND 1800),
+  max_players integer NOT NULL DEFAULT 100 CHECK (max_players BETWEEN 1 AND 500),
+  radio_channel text NOT NULL DEFAULT '',
+  allowed_roles jsonb NOT NULL DEFAULT '["OPERATOR"]',
+  active boolean NOT NULL DEFAULT true,
+  UNIQUE(game_id, code)
+);
+
 CREATE TABLE IF NOT EXISTS participants (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   callsign text NOT NULL,
   normalized_callsign text NOT NULL,
   team team NOT NULL,
+  squad_id uuid REFERENCES operational_teams(id) ON DELETE SET NULL,
   role text NOT NULL DEFAULT 'OPERATOR',
   status participant_status NOT NULL DEFAULT 'READY',
   map_access boolean NOT NULL DEFAULT true,
@@ -127,3 +156,16 @@ CREATE TABLE IF NOT EXISTS objectives (
   progress real NOT NULL DEFAULT 0,
   visibility text NOT NULL DEFAULT 'ALL'
 );
+
+CREATE TABLE IF NOT EXISTS session_archives (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  label text NOT NULL,
+  automatic boolean NOT NULL DEFAULT false,
+  snapshot jsonb NOT NULL,
+  participant_count integer NOT NULL DEFAULT 0,
+  event_count integer NOT NULL DEFAULT 0,
+  track_count integer NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS session_archives_game_time ON session_archives(game_id, created_at DESC);
