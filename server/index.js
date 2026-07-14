@@ -28,7 +28,11 @@ const DEFAULT_FEATURES = Object.freeze({
   boundaryReminders: true, pwaInstall: true, adminMessages: true, csvExport: true,
   showBattery: true, showAccuracy: true, gpsFallback: true, offlineQueue: true,
   playerMessaging: true, hitTracking: true, respawnZones: true, fovPrediction: true,
-  compassSharing: true, objectives: true, commanderApp: true, scoreBoard: true
+  compassSharing: true, objectives: true, commanderApp: true, scoreBoard: true,
+  backgroundTrackingAid: true, screenWakeLock: true, pushNotifications: true,
+  reconnectRecovery: true, stableMapRendering: true, gpsQualityWarnings: true,
+  hardwareTimerShortcut: false, automaticCheckpoints: false, stealthMode: false,
+  fogOfWar: false, medicSystem: false, ammoLogistics: false
 });
 const FEATURE_KEYS = Object.keys(DEFAULT_FEATURES);
 const STAFF_PERMISSIONS = Object.freeze([
@@ -36,16 +40,27 @@ const STAFF_PERMISSIONS = Object.freeze([
   'SEND_ALL_MESSAGES','SEND_TEAM_MESSAGES','SEND_DIRECT_MESSAGES','RECEIVE_PLAYER_MESSAGES',
   'MANAGE_PARTICIPANTS','MANAGE_ZONES','MANAGE_RESPAWNS','MANAGE_OBJECTIVES','ACK_SOS','VIEW_REPORTS'
 ]);
+const commonMode = (overrides, modeRules) => ({
+  hitsToRespawn: 1, respawnSeconds: 60, respawnZoneRequired: true, lives: 0,
+  scoreLimit: 0, roundMinutes: 120, fovRange: 150, fovAngle: 65,
+  ...overrides, modeRules
+});
 const GAME_MODES = Object.freeze({
-  CLASSIC_SERE: { name: 'SERE / Polowanie', description: 'Jedna strona ukrywa się, druga prowadzi pościg.', defaults: { hitsToRespawn: 1, respawnSeconds: 60, respawnZoneRequired: false, lives: 1, scoreLimit: 0, roundMinutes: 240, fovRange: 180, fovAngle: 70 } },
-  DOMINATION: { name: 'Dominacja', description: 'Zespoły przejmują i utrzymują strefy punktowe.', defaults: { hitsToRespawn: 2, respawnSeconds: 45, respawnZoneRequired: true, lives: 0, scoreLimit: 500, roundMinutes: 120, fovRange: 140, fovAngle: 65 } },
-  CAPTURE_FLAG: { name: 'Capture the Flag', description: 'Przechwycenie flagi przeciwnika i powrót do bazy.', defaults: { hitsToRespawn: 1, respawnSeconds: 40, respawnZoneRequired: true, lives: 0, scoreLimit: 5, roundMinutes: 90, fovRange: 150, fovAngle: 65 } },
-  VIP_ESCORT: { name: 'Eskorta VIP', description: 'Eskorta chroni VIP-a w drodze do strefy ewakuacji.', defaults: { hitsToRespawn: 2, respawnSeconds: 60, respawnZoneRequired: true, lives: 3, scoreLimit: 1, roundMinutes: 90, fovRange: 160, fovAngle: 70 } },
-  SEARCH_RESCUE: { name: 'Search & Rescue', description: 'Poszukiwanie celów i ewakuacja do bezpiecznej strefy.', defaults: { hitsToRespawn: 3, respawnSeconds: 90, respawnZoneRequired: true, lives: 2, scoreLimit: 4, roundMinutes: 180, fovRange: 200, fovAngle: 80 } },
-  TEAM_DEATHMATCH: { name: 'Team Deathmatch', description: 'Punktowana walka drużynowa z falami respawnu.', defaults: { hitsToRespawn: 1, respawnSeconds: 30, respawnZoneRequired: true, lives: 0, scoreLimit: 100, roundMinutes: 60, fovRange: 130, fovAngle: 60 } }
+  CLASSIC_SERE: { name: 'SERE / Polowanie', description: 'Jedna strona ukrywa się, druga prowadzi pościg.', defaults: commonMode({ respawnZoneRequired: false, lives: 1, roundMinutes: 240, fovRange: 180, fovAngle: 70 }, { captureSeconds: 90, seekerDelayMinutes: 20, revealIntervalMinutes: 30 }) },
+  DOMINATION: { name: 'Dominacja', description: 'Zespoły przejmują i utrzymują strefy punktowe.', defaults: commonMode({ hitsToRespawn: 2, respawnSeconds: 45, scoreLimit: 500 }, { captureSeconds: 45, pointsPerMinute: 10, zonesToWin: 3 }) },
+  CAPTURE_FLAG: { name: 'Capture the Flag', description: 'Przechwycenie flagi przeciwnika i powrót do bazy.', defaults: commonMode({ respawnSeconds: 40, scoreLimit: 5, roundMinutes: 90 }, { flagReturnSeconds: 120, capturesToWin: 3, carrierVisible: true }) },
+  VIP_ESCORT: { name: 'Eskorta VIP', description: 'Eskorta chroni VIP-a w drodze do strefy ewakuacji.', defaults: commonMode({ hitsToRespawn: 2, lives: 3, scoreLimit: 1, roundMinutes: 90, fovRange: 160, fovAngle: 70 }, { extractionHoldSeconds: 60, vipLives: 1, vipVisible: false }) },
+  SEARCH_RESCUE: { name: 'Search & Rescue', description: 'Poszukiwanie celów i ewakuacja do bezpiecznej strefy.', defaults: commonMode({ hitsToRespawn: 3, respawnSeconds: 90, lives: 2, scoreLimit: 4, roundMinutes: 180, fovRange: 200, fovAngle: 80 }, { objectivesToFind: 4, extractionHoldSeconds: 90, intelRevealMinutes: 20 }) },
+  TEAM_DEATHMATCH: { name: 'Team Deathmatch', description: 'Punktowana walka drużynowa z falami respawnu.', defaults: commonMode({ respawnSeconds: 30, scoreLimit: 100, roundMinutes: 60, fovRange: 130, fovAngle: 60 }, { pointsPerHit: 1, waveRespawnSeconds: 60, friendlyFire: false }) },
+  BOMB_DEFUSAL: { name: 'Podłożenie ładunku', description: 'Atakujący podkładają ładunek, obrońcy próbują go rozbroić.', defaults: commonMode({ lives: 1, scoreLimit: 7, roundMinutes: 45 }, { plantSeconds: 15, defuseSeconds: 20, bombTimerSeconds: 300, roundsToWin: 4 }) },
+  KING_HILL: { name: 'Król wzgórza', description: 'Utrzymanie ruchomej strefy daje punkty drużynie.', defaults: commonMode({ hitsToRespawn: 2, respawnSeconds: 45, scoreLimit: 600, roundMinutes: 100 }, { captureSeconds: 30, pointsPerMinute: 20, hillMoveMinutes: 15 }) },
+  CONVOY_AMBUSH: { name: 'Konwój / Zasadzka', description: 'Eskorta prowadzi konwój przez kolejne punkty kontrolne.', defaults: commonMode({ lives: 3, scoreLimit: 5, roundMinutes: 150 }, { convoyLives: 3, checkpointCount: 5, ambushDelayMinutes: 10 }) },
+  INFECTION: { name: 'Infekcja', description: 'Trafieni przechodzą do rosnącej drużyny zainfekowanych.', defaults: commonMode({ respawnSeconds: 15, roundMinutes: 90 }, { initialInfected: 2, conversionSeconds: 30, survivorWinMinutes: 60 }) },
+  MEDIC_RESCUE: { name: 'Medyk / Ratunek', description: 'Drużyny stabilizują rannych i ewakuują ich do punktu medycznego.', defaults: commonMode({ hitsToRespawn: 2, respawnSeconds: 120, lives: 2, roundMinutes: 180 }, { bleedoutSeconds: 300, reviveSeconds: 60, medicLives: 3 }) },
+  SUPPLY_DROP: { name: 'Zrzut zaopatrzenia', description: 'Zespoły odnajdują, przenoszą i zabezpieczają skrzynie.', defaults: commonMode({ scoreLimit: 5, roundMinutes: 120 }, { cratesToWin: 5, dropRevealMinutes: 10, carryLimit: 1 }) }
 });
 const DEFAULT_MODE = 'CLASSIC_SERE';
-const defaultModeSettings = mode => ({ ...GAME_MODES[mode || DEFAULT_MODE].defaults });
+const defaultModeSettings = mode => structuredClone(GAME_MODES[mode || DEFAULT_MODE].defaults);
 
 const app = express();
 const server = http.createServer(app);
@@ -88,7 +103,9 @@ function restoreState() {
     const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     for (const item of data.games || []) {
       const mode = GAME_MODES[item.mode] ? item.mode : DEFAULT_MODE;
-      store.games.set(item.id, { ...item, mode, modeSettings: { ...defaultModeSettings(mode), ...(item.modeSettings || {}) }, zones: item.zones || [], objectives: item.objectives || [], scores: { SERE: 0, OPFOR: 0, ...(item.scores || {}) }, features: { ...DEFAULT_FEATURES, ...(item.features || {}) } });
+      const restoredSettings = { ...defaultModeSettings(mode), ...(item.modeSettings || {}) };
+      restoredSettings.modeRules = { ...defaultModeSettings(mode).modeRules, ...(item.modeSettings?.modeRules || {}) };
+      store.games.set(item.id, { ...item, mode, modeSettings: restoredSettings, zones: item.zones || [], objectives: item.objectives || [], scores: { SERE: 0, OPFOR: 0, ...(item.scores || {}) }, features: { ...DEFAULT_FEATURES, ...(item.features || {}) } });
     }
     for (const item of data.participants || []) {
       item.activeTimer = null;
@@ -127,8 +144,8 @@ function makeGame({ code, name, source = demoGame }) {
     opforTimerSeconds: source?.opforTimerSeconds || 60,
     boundary: (source?.boundary || boundary).map(point => [...point]),
     mode: source?.mode || DEFAULT_MODE,
-    modeSettings: { ...defaultModeSettings(source?.mode || DEFAULT_MODE), ...(source?.modeSettings || {}) },
-    zones: (source?.zones || []).map(zone => ({ ...zone, center: [...zone.center] })),
+    modeSettings: { ...defaultModeSettings(source?.mode || DEFAULT_MODE), ...(source?.modeSettings || {}), modeRules: { ...defaultModeSettings(source?.mode || DEFAULT_MODE).modeRules, ...(source?.modeSettings?.modeRules || {}) } },
+    zones: (source?.zones || []).map(zone => ({ ...zone, center: [...zone.center], points: zone.points?.map(point => [...point]) })),
     objectives: (source?.objectives || []).map(objective => ({ ...objective })),
     scores: { SERE: 0, OPFOR: 0 },
     features: { ...DEFAULT_FEATURES, ...(source?.features || {}) },
@@ -152,13 +169,18 @@ const zoneSchema = z.object({
   id: z.string().uuid(), name: z.string().trim().min(2).max(50),
   type: z.enum(['RESPAWN','OBJECTIVE','SAFE','EXTRACTION','FLAG','CONTROL','DANGER']),
   team: z.enum(['ALL','SERE','OPFOR']), center: z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)]),
-  radius: z.number().int().min(10).max(10_000), color: z.string().regex(/^#[0-9a-f]{6}$/i).default('#a3ff4f')
+  radius: z.number().int().min(10).max(10_000), color: z.string().regex(/^#[0-9a-f]{6}$/i).default('#a3ff4f'),
+  shape: z.enum(['CIRCLE','POLYGON']).default('CIRCLE'),
+  points: z.array(z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)])).max(100).optional()
+}).superRefine((zone, context) => {
+  if (zone.shape === 'POLYGON' && (!zone.points || zone.points.length < 3)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['points'], message: 'Strefa wielokątna wymaga co najmniej 3 punktów.' });
 });
 const objectiveSchema = z.object({ id: z.string().uuid(), name: z.string().trim().min(2).max(80), team: z.enum(['ALL','SERE','OPFOR']), points: z.number().int().min(0).max(10_000), status: z.enum(['PENDING','ACTIVE','COMPLETED','FAILED']) });
 const modeSettingsSchema = z.object({
   hitsToRespawn: z.number().int().min(1).max(20), respawnSeconds: z.number().int().min(5).max(1800),
   respawnZoneRequired: z.boolean(), lives: z.number().int().min(0).max(100), scoreLimit: z.number().int().min(0).max(100_000),
-  roundMinutes: z.number().int().min(5).max(1440), fovRange: z.number().int().min(20).max(1000), fovAngle: z.number().int().min(20).max(160)
+  roundMinutes: z.number().int().min(5).max(1440), fovRange: z.number().int().min(20).max(1000), fovAngle: z.number().int().min(20).max(160),
+  modeRules: z.record(z.union([z.number().min(0).max(100_000), z.boolean(), z.string().max(100)])).optional()
 });
 const settingsSchema = z.object({
   name: z.string().trim().min(3).max(100).optional(),
@@ -255,7 +277,15 @@ function pointInPolygon(lat, lon, polygon) {
   return inside;
 }
 function distanceMeters(lat1, lon1, lat2, lon2) { const r = 6371000, p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180, dp = (lat2-lat1)*Math.PI/180, dl=(lon2-lon1)*Math.PI/180, a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2; return 2*r*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
-function inRespawnZone(game, participant) { return !game.modeSettings?.respawnZoneRequired || (participant.location && game.zones.some(zone => zone.type === 'RESPAWN' && (zone.team === 'ALL' || zone.team === participant.team) && distanceMeters(participant.location.latitude, participant.location.longitude, zone.center[0], zone.center[1]) <= zone.radius)); }
+function inRespawnZone(game, participant) {
+  if (!game.modeSettings?.respawnZoneRequired) return true;
+  if (!participant.location) return false;
+  return game.zones.some(zone => {
+    if (zone.type !== 'RESPAWN' || (zone.team !== 'ALL' && zone.team !== participant.team)) return false;
+    if (zone.shape === 'POLYGON' && zone.points?.length >= 3) return pointInPolygon(participant.location.latitude, participant.location.longitude, zone.points);
+    return distanceMeters(participant.location.latitude, participant.location.longitude, zone.center[0], zone.center[1]) <= zone.radius;
+  });
+}
 function activeSos(gameId) {
   return [...store.sos.values()].filter(s => s.gameId === gameId && ['ACTIVE','ACKNOWLEDGED'].includes(s.status));
 }
@@ -331,6 +361,13 @@ app.patch('/api/staff/:id', auth, requireRole('ADMIN'), async (req, res) => {
   Object.assign(account, updates, { updatedAt: new Date().toISOString() }); event(account.gameId, 'STAFF_CHANGED', { callsign: account.callsign });
   broadcastState(account.gameId); res.json(staffView(account));
 });
+app.delete('/api/staff/:id', auth, requireRole('ADMIN'), (req, res) => {
+  const account = store.staff.get(req.params.id);
+  if (!account) return res.status(404).json({ error: 'Nie znaleziono konta personelu.' });
+  store.staff.delete(account.id);
+  event(account.gameId, 'STAFF_DELETED', { callsign: account.callsign, username: account.username }, null, 'WARNING');
+  broadcastState(account.gameId); persistSoon(); res.status(204).end();
+});
 app.post('/api/games/:code/join', (req, res) => {
   const parsed = joinSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Sprawdź kryptonim, drużynę i zgody.', issues: parsed.error.issues });
@@ -362,8 +399,12 @@ app.patch('/api/games/:id/settings', auth, requireRole('ADMIN'), (req, res) => {
   const game = store.games.get(req.params.id);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowe ustawienia gry.' });
   if (game.state === 'ACTIVE' && parsed.data.boundary) return res.status(409).json({ error: 'Wstrzymaj grę przed zmianą granicy terenu.' });
-  if (parsed.data.mode) parsed.data.modeSettings = { ...defaultModeSettings(parsed.data.mode), ...(parsed.data.modeSettings || {}) };
-  else if (parsed.data.modeSettings) parsed.data.modeSettings = { ...game.modeSettings, ...parsed.data.modeSettings };
+  if (parsed.data.mode) {
+    const defaults = defaultModeSettings(parsed.data.mode);
+    parsed.data.modeSettings = { ...defaults, ...(parsed.data.modeSettings || {}), modeRules: { ...defaults.modeRules, ...(parsed.data.modeSettings?.modeRules || {}) } };
+  } else if (parsed.data.modeSettings) {
+    parsed.data.modeSettings = { ...game.modeSettings, ...parsed.data.modeSettings, modeRules: { ...(game.modeSettings?.modeRules || {}), ...(parsed.data.modeSettings.modeRules || {}) } };
+  }
   if (parsed.data.features) parsed.data.features = { ...game.features, ...parsed.data.features };
   Object.assign(game, parsed.data);
   event(game.id, 'GAME_SETTINGS_CHANGED', { fields: Object.keys(parsed.data) });

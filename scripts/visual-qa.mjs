@@ -65,12 +65,21 @@ try {
     await evaluate(`document.querySelector('[data-settings-tab="${tab}"]').click()`);await sleep(tab==='zones'?1200:450);
     if (['gameplay','zones','accounts'].includes(tab)) await screenshot(`admin-${tab}-desktop`);
     results.push({name:`admin-${tab}-desktop`,...(await inspect())});
+    if(tab==='zones'){
+      await evaluate(`document.querySelector('[data-action="zone-new"]').click()`);await sleep(650);await screenshot('admin-zone-editor-desktop');
+      const zoneEditor=await evaluate(`(()=>({selected:Boolean(document.querySelector('.zone-select.active')),handles:document.querySelectorAll('.zone-point-handle').length,shape:document.querySelector('#zone-shape')?.value}))()`);
+      results.push({name:'admin-zone-editor-desktop',...(await inspect()),zoneEditor});
+    }
   }
+  await evaluate(`document.querySelector('[data-settings-tab="gameplay"]').click()`);await sleep(350);await evaluate(`document.querySelector('input[name="game-mode"][value="DOMINATION"]').click()`);await sleep(350);await screenshot('admin-gameplay-selected-desktop');
+  const modeSelection=await evaluate(`(()=>({current:document.querySelector('.mode-card.current b')?.textContent,selected:document.querySelector('.mode-card.selected b')?.textContent,selectedCurrent:document.querySelector('.mode-card.selected')?.classList.contains('current')}))()`);
+  results.push({name:'admin-gameplay-selected-desktop',...(await inspect()),modeSelection});
   await viewport(390, 844, true);await evaluate(`document.querySelector('[data-settings-tab="gameplay"]').click()`);await sleep(600);await screenshot('admin-gameplay-mobile');results.push({name:'admin-gameplay-mobile',...(await inspect())});
 
-  const adminAuth = await (await fetch(`${base}/api/auth/admin`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ callsign:'GAME-MASTER', password:'2468' }) })).json();
-  const accountResponse = await fetch(`${base}/api/staff`, { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${adminAuth.token}`}, body:JSON.stringify({gameId:adminAuth.gameId,username:'qa-dowodca',callsign:'QA-ALFA',password:'Bezpieczne123',title:'Dowódca testowy',team:'ALL',permissions:['VIEW_ALL_PLAYERS','VIEW_FOV','VIEW_EVENTS','VIEW_SOS','SEND_ALL_MESSAGES','SEND_TEAM_MESSAGES','SEND_DIRECT_MESSAGES','RECEIVE_PLAYER_MESSAGES','MANAGE_PARTICIPANTS','MANAGE_OBJECTIVES','ACK_SOS']}) });
-  if (!accountResponse.ok && accountResponse.status !== 409) throw new Error(`Nie utworzono konta QA: ${accountResponse.status}`);
+  await viewport(1440,1000);await evaluate(`document.querySelector('[data-settings-tab="accounts"]').click()`);await sleep(450);
+  await evaluate(`(()=>{const values={'#staff-username':'qa-dowodca','#staff-callsign':'QA-ALFA','#staff-password':'Bezpieczne123','#staff-title':'Dowódca testowy'};for(const [selector,value] of Object.entries(values)){const input=document.querySelector(selector);input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}document.querySelector('#staff-create-form').requestSubmit();return true})()`);await sleep(1600);await evaluate(`scrollTo(0,0)`);await screenshot('admin-account-existing-desktop');
+  const accountEditor=await evaluate(`(async()=>{const gameId=document.querySelector('#admin-session')?.value,token=sessionStorage.getItem('fm-admin-token'),headers={Authorization:'Bearer '+token},response=await fetch('/api/staff?gameId='+encodeURIComponent(gameId),{headers}),accounts=await response.json(),games=await(await fetch('/api/games',{headers})).json(),allCounts={};for(const game of games)allCounts[game.id]=(await(await fetch('/api/staff?gameId='+encodeURIComponent(game.id),{headers})).json()).length;return{accounts:document.querySelectorAll('.staff-account').length,editable:Boolean(document.querySelector('[id^="staff-callsign-"]')),deleteButton:Boolean(document.querySelector('[data-action="staff-delete"]')),apiCount:accounts.length,gameId,allCounts}})()`);
+  results.push({name:'admin-account-existing-desktop',...(await inspect()),accountEditor});
   await viewport(1440, 1000);await navigate(`${base}/staff.html`);
   await evaluate(`(async()=>{const r=await fetch('/api/auth/staff',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:'WILK24',username:'qa-dowodca',password:'Bezpieczne123'})});const x=await r.json();sessionStorage.setItem('fm-staff','ok');sessionStorage.setItem('fm-staff-token',x.token);return true})()`);
   await call('Page.reload');
@@ -83,7 +92,7 @@ try {
   const sosLayers = await evaluate(`(()=>{const modal=document.querySelector('.modal-backdrop'),map=document.querySelector('.leaflet-map');return{modal:Boolean(modal),map:Boolean(map),modalZ:modal?getComputedStyle(modal).zIndex:null,mapZ:map?getComputedStyle(map).zIndex:null,modalCoversMap:modal&&map?(()=>{const a=modal.getBoundingClientRect(),b=map.getBoundingClientRect();return a.left<=b.left&&a.right>=b.right&&a.top<=b.top&&a.bottom>=b.bottom})():false}})()`);
   results.push({name:'player-map-sos-mobile',...(await inspect()),sosLayers});
   await fs.writeFile(path.join(output, 'report.json'), JSON.stringify(results, null, 2));
-  const failures = results.filter(item => item.bodyWidth > item.width + 2 || item.overflow.length || item.panelOverlaps.length || item.errors.length || (item.sosLayers && (!item.sosLayers.modalCoversMap || Number(item.sosLayers.modalZ) <= Number(item.sosLayers.mapZ))));
+  const failures = results.filter(item => item.bodyWidth > item.width + 2 || item.overflow.length || item.panelOverlaps.length || item.errors.length || (item.sosLayers && (!item.sosLayers.modalCoversMap || Number(item.sosLayers.modalZ) <= Number(item.sosLayers.mapZ))) || (item.zoneEditor && (!item.zoneEditor.selected || item.zoneEditor.handles < 3)) || (item.modeSelection && (item.modeSelection.current===item.modeSelection.selected || item.modeSelection.selectedCurrent)) || (item.accountEditor && (!item.accountEditor.accounts || !item.accountEditor.editable || !item.accountEditor.deleteButton)));
   console.log(JSON.stringify({screenshots:output,checks:results.length,failures},null,2));
   if (failures.length) process.exitCode = 1;
 } finally {
