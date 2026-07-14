@@ -1,0 +1,16 @@
+{
+  "name": "Fieldmaster — Dowódca",
+  "short_name": "Fieldmaster C3",
+  "id": "/staff-app",
+  "scope": "/",
+  "description": "Aplikacja dowódcy i personelu rozgrywki ASG",
+  "start_url": "/staff.html",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#080a09",
+  "theme_color": "#0b0e0c",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

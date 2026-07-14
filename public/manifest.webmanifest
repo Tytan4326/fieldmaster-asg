@@ -16,6 +16,7 @@
   ],
   "shortcuts": [
     { "name": "Dołącz do gry", "short_name": "Dołącz", "url": "/?view=join", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
-    { "name": "Panel administratora", "short_name": "Administrator", "url": "/?view=admin", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+    { "name": "Aplikacja dowódcy", "short_name": "Dowódca", "url": "/staff.html", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Panel Mistrza Gry", "short_name": "Mistrz Gry", "url": "/admin.html", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
   ]
 }

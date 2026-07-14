@@ -26,9 +26,26 @@ const DEFAULT_FEATURES = Object.freeze({
   allowTeamChanges: true, allowJoining: true, satelliteDefault: true, mgrsGrid: true,
   shareLocationInLobby: true, opforTeamMap: true, audioAlarms: true, vibration: true,
   boundaryReminders: true, pwaInstall: true, adminMessages: true, csvExport: true,
-  showBattery: true, showAccuracy: true, gpsFallback: true, offlineQueue: true
+  showBattery: true, showAccuracy: true, gpsFallback: true, offlineQueue: true,
+  playerMessaging: true, hitTracking: true, respawnZones: true, fovPrediction: true,
+  compassSharing: true, objectives: true, commanderApp: true, scoreBoard: true
 });
 const FEATURE_KEYS = Object.keys(DEFAULT_FEATURES);
+const STAFF_PERMISSIONS = Object.freeze([
+  'VIEW_ALL_PLAYERS','VIEW_TEAM_PLAYERS','VIEW_FOV','VIEW_EVENTS','VIEW_SOS',
+  'SEND_ALL_MESSAGES','SEND_TEAM_MESSAGES','SEND_DIRECT_MESSAGES','RECEIVE_PLAYER_MESSAGES',
+  'MANAGE_PARTICIPANTS','MANAGE_ZONES','MANAGE_RESPAWNS','MANAGE_OBJECTIVES','ACK_SOS','VIEW_REPORTS'
+]);
+const GAME_MODES = Object.freeze({
+  CLASSIC_SERE: { name: 'SERE / Polowanie', description: 'Jedna strona ukrywa się, druga prowadzi pościg.', defaults: { hitsToRespawn: 1, respawnSeconds: 60, respawnZoneRequired: false, lives: 1, scoreLimit: 0, roundMinutes: 240, fovRange: 180, fovAngle: 70 } },
+  DOMINATION: { name: 'Dominacja', description: 'Zespoły przejmują i utrzymują strefy punktowe.', defaults: { hitsToRespawn: 2, respawnSeconds: 45, respawnZoneRequired: true, lives: 0, scoreLimit: 500, roundMinutes: 120, fovRange: 140, fovAngle: 65 } },
+  CAPTURE_FLAG: { name: 'Capture the Flag', description: 'Przechwycenie flagi przeciwnika i powrót do bazy.', defaults: { hitsToRespawn: 1, respawnSeconds: 40, respawnZoneRequired: true, lives: 0, scoreLimit: 5, roundMinutes: 90, fovRange: 150, fovAngle: 65 } },
+  VIP_ESCORT: { name: 'Eskorta VIP', description: 'Eskorta chroni VIP-a w drodze do strefy ewakuacji.', defaults: { hitsToRespawn: 2, respawnSeconds: 60, respawnZoneRequired: true, lives: 3, scoreLimit: 1, roundMinutes: 90, fovRange: 160, fovAngle: 70 } },
+  SEARCH_RESCUE: { name: 'Search & Rescue', description: 'Poszukiwanie celów i ewakuacja do bezpiecznej strefy.', defaults: { hitsToRespawn: 3, respawnSeconds: 90, respawnZoneRequired: true, lives: 2, scoreLimit: 4, roundMinutes: 180, fovRange: 200, fovAngle: 80 } },
+  TEAM_DEATHMATCH: { name: 'Team Deathmatch', description: 'Punktowana walka drużynowa z falami respawnu.', defaults: { hitsToRespawn: 1, respawnSeconds: 30, respawnZoneRequired: true, lives: 0, scoreLimit: 100, roundMinutes: 60, fovRange: 130, fovAngle: 60 } }
+});
+const DEFAULT_MODE = 'CLASSIC_SERE';
+const defaultModeSettings = mode => ({ ...GAME_MODES[mode || DEFAULT_MODE].defaults });
 
 const app = express();
 const server = http.createServer(app);
@@ -48,7 +65,7 @@ const boundary = [
 // Store demonstracyjny. Interfejs repozytorium jest celowo mały, aby podmienić go
 // na transakcje PostgreSQL zgodnie z server/schema.sql bez zmiany kontrolerów.
 const store = {
-  games: new Map(), participants: new Map(), events: [], timers: new Map(), sos: new Map()
+  games: new Map(), participants: new Map(), staff: new Map(), events: [], messages: [], timers: new Map(), sos: new Map()
 };
 let persistenceTimer;
 function persistSoon() {
@@ -56,8 +73,8 @@ function persistSoon() {
   clearTimeout(persistenceTimer);
   persistenceTimer = setTimeout(() => {
     const payload = {
-      games: [...store.games.values()], participants: [...store.participants.values()],
-      events: store.events.slice(0, 10_000), timers: [...store.timers.values()], sos: [...store.sos.values()]
+      games: [...store.games.values()], participants: [...store.participants.values()], staff: [...store.staff.values()],
+      events: store.events.slice(0, 10_000), messages: store.messages.slice(0, 10_000), timers: [...store.timers.values()], sos: [...store.sos.values()]
     };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     const temporary = `${DATA_FILE}.tmp`;
@@ -69,15 +86,19 @@ function restoreState() {
   if (!DATA_FILE || !fs.existsSync(DATA_FILE)) return false;
   try {
     const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    for (const item of data.games || []) store.games.set(item.id, { ...item, features: { ...DEFAULT_FEATURES, ...(item.features || {}) } });
+    for (const item of data.games || []) {
+      const mode = GAME_MODES[item.mode] ? item.mode : DEFAULT_MODE;
+      store.games.set(item.id, { ...item, mode, modeSettings: { ...defaultModeSettings(mode), ...(item.modeSettings || {}) }, zones: item.zones || [], objectives: item.objectives || [], scores: { SERE: 0, OPFOR: 0, ...(item.scores || {}) }, features: { ...DEFAULT_FEATURES, ...(item.features || {}) } });
+    }
     for (const item of data.participants || []) {
       item.activeTimer = null;
       if (['TIMER','RESPAWN'].includes(item.status)) item.status = 'ACTIVE';
       store.participants.set(item.id, item);
     }
+    for (const item of data.staff || []) store.staff.set(item.id, item);
     for (const item of data.timers || []) store.timers.set(item.id, { ...item, cancelledAt: item.cancelledAt || Date.now() });
     for (const item of data.sos || []) store.sos.set(item.id, item);
-    store.events = data.events || [];
+    store.events = data.events || []; store.messages = data.messages || [];
     return store.games.size > 0;
   } catch (error) {
     console.error('Nie udało się odczytać stanu lokalnego:', error.message);
@@ -90,7 +111,7 @@ if (!restored || !demoGame) {
   demoGame = {
     id: crypto.randomUUID(), code: 'WILK24', name: 'Operacja Nocny Wilk', state: 'LOBBY',
     durationMinutes: 1440, sereTimerSeconds: 20, opforTimerSeconds: 60, boundary,
-    features: { ...DEFAULT_FEATURES },
+    mode: DEFAULT_MODE, modeSettings: defaultModeSettings(DEFAULT_MODE), zones: [], objectives: [], scores: { SERE: 0, OPFOR: 0 }, features: { ...DEFAULT_FEATURES },
     startedAt: null, finishedAt: null, createdAt: new Date().toISOString()
   };
   store.games.set(demoGame.id, demoGame);
@@ -105,6 +126,11 @@ function makeGame({ code, name, source = demoGame }) {
     sereTimerSeconds: source?.sereTimerSeconds || 20,
     opforTimerSeconds: source?.opforTimerSeconds || 60,
     boundary: (source?.boundary || boundary).map(point => [...point]),
+    mode: source?.mode || DEFAULT_MODE,
+    modeSettings: { ...defaultModeSettings(source?.mode || DEFAULT_MODE), ...(source?.modeSettings || {}) },
+    zones: (source?.zones || []).map(zone => ({ ...zone, center: [...zone.center] })),
+    objectives: (source?.objectives || []).map(objective => ({ ...objective })),
+    scores: { SERE: 0, OPFOR: 0 },
     features: { ...DEFAULT_FEATURES, ...(source?.features || {}) },
     startedAt: null, pausedAt: null, finishedAt: null, createdAt: new Date().toISOString()
   };
@@ -119,26 +145,48 @@ const joinSchema = z.object({
 const locationSchema = z.object({
   latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180),
   accuracy: z.number().min(0).max(10_000).optional(), battery: z.number().min(0).max(100).optional(),
+  heading: z.number().min(0).max(360).nullable().optional(), speed: z.number().min(0).max(150).nullable().optional(), headingSource: z.enum(['GPS','COMPASS','MOVEMENT','MANUAL']).optional(),
   timestamp: z.string().datetime().optional()
 });
+const zoneSchema = z.object({
+  id: z.string().uuid(), name: z.string().trim().min(2).max(50),
+  type: z.enum(['RESPAWN','OBJECTIVE','SAFE','EXTRACTION','FLAG','CONTROL','DANGER']),
+  team: z.enum(['ALL','SERE','OPFOR']), center: z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)]),
+  radius: z.number().int().min(10).max(10_000), color: z.string().regex(/^#[0-9a-f]{6}$/i).default('#a3ff4f')
+});
+const objectiveSchema = z.object({ id: z.string().uuid(), name: z.string().trim().min(2).max(80), team: z.enum(['ALL','SERE','OPFOR']), points: z.number().int().min(0).max(10_000), status: z.enum(['PENDING','ACTIVE','COMPLETED','FAILED']) });
+const modeSettingsSchema = z.object({
+  hitsToRespawn: z.number().int().min(1).max(20), respawnSeconds: z.number().int().min(5).max(1800),
+  respawnZoneRequired: z.boolean(), lives: z.number().int().min(0).max(100), scoreLimit: z.number().int().min(0).max(100_000),
+  roundMinutes: z.number().int().min(5).max(1440), fovRange: z.number().int().min(20).max(1000), fovAngle: z.number().int().min(20).max(160)
+});
 const settingsSchema = z.object({
-  code: z.string().trim().min(4).max(16).regex(/^[A-Za-z0-9_-]+$/).transform(value => value.toUpperCase()).optional(),
   name: z.string().trim().min(3).max(100).optional(),
   durationMinutes: z.number().int().min(10).max(2880).optional(),
   sereTimerSeconds: z.number().int().min(5).max(600).optional(),
   opforTimerSeconds: z.number().int().min(5).max(600).optional(),
   boundary: z.array(z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)])).min(3).max(100).optional(),
+  mode: z.enum(Object.keys(GAME_MODES)).optional(), modeSettings: modeSettingsSchema.partial().optional(),
+  zones: z.array(zoneSchema).max(100).optional(), objectives: z.array(objectiveSchema).max(100).optional(),
   features: z.object(Object.fromEntries(FEATURE_KEYS.map(key => [key, z.boolean().optional()]))).strict().optional()
 }).refine(value => Object.keys(value).length > 0);
+const codeSchema = z.object({ code: z.string().trim().min(4).max(16).regex(/^[A-Za-z0-9_-]+$/).transform(value => value.toUpperCase()) });
 const createGameSchema = z.object({
   code: z.string().trim().min(4).max(16).regex(/^[A-Za-z0-9_-]+$/).transform(value => value.toUpperCase()),
   name: z.string().trim().min(3).max(100),
   cloneSettingsFrom: z.string().uuid().optional()
 });
 const participantUpdateSchema = z.object({
-  status: z.enum(['WAITING','READY','ACTIVE','TIMER','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED']).optional(),
-  team: z.enum(['SERE','OPFOR']).optional()
+  status: z.enum(['WAITING','READY','ACTIVE','TIMER','RESPAWN_WAIT','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED']).optional(),
+  team: z.enum(['SERE','OPFOR']).optional(), hitCount: z.number().int().min(0).max(100).optional(), respawnRequired: z.boolean().optional()
 }).refine(value => Object.keys(value).length > 0);
+const permissionSchema = z.array(z.enum(STAFF_PERMISSIONS)).max(STAFF_PERMISSIONS.length);
+const createStaffSchema = z.object({
+  gameId: z.string().uuid(), username: z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.-]+$/).transform(value => value.toLowerCase()),
+  callsign: z.string().trim().min(2).max(32), password: z.string().min(8).max(128), team: z.enum(['ALL','SERE','OPFOR']),
+  title: z.string().trim().min(2).max(50).default('Dowódca'), permissions: permissionSchema
+});
+const updateStaffSchema = z.object({ callsign: z.string().trim().min(2).max(32).optional(), title: z.string().trim().min(2).max(50).optional(), team: z.enum(['ALL','SERE','OPFOR']).optional(), permissions: permissionSchema.optional(), active: z.boolean().optional(), password: z.string().min(8).max(128).optional() }).refine(value => Object.keys(value).length > 0);
 
 function sign(payload, expiresIn = '12h') { return jwt.sign(payload, JWT_SECRET, { expiresIn }); }
 function auth(req, res, next) {
@@ -148,6 +196,17 @@ function auth(req, res, next) {
   } catch { res.status(401).json({ error: 'Brak ważnej sesji.' }); }
 }
 function requireRole(...roles) { return (req, res, next) => roles.includes(req.auth?.role) ? next() : res.status(403).json({ error: 'Brak uprawnienia.' }); }
+function effectiveViewer(viewer) {
+  if (viewer?.role === 'PARTICIPANT') {
+    const participant = store.participants.get(viewer.participantId);
+    return participant ? { ...viewer, gameId: participant.gameId, team: participant.team, callsign: participant.callsign } : viewer;
+  }
+  if (viewer?.role !== 'STAFF') return viewer;
+  const account = store.staff.get(viewer.staffId);
+  return account?.active ? { ...viewer, gameId: account.gameId, team: account.team, permissions: account.permissions, callsign: account.callsign } : viewer;
+}
+function can(viewer, permission) { return viewer?.role === 'ADMIN' || effectiveViewer(viewer)?.permissions?.includes(permission); }
+function requirePermission(permission) { return (req, res, next) => can(req.auth, permission) ? next() : res.status(403).json({ error: 'To konto nie ma wymaganego uprawnienia.' }); }
 function event(gameId, type, details = {}, participantId = null, severity = 'INFO') {
   const item = { id: crypto.randomUUID(), gameId, participantId, type, severity, details, createdAt: new Date().toISOString() };
   store.events.unshift(item); io.to(`game:${gameId}:staff`).emit('event:new', item); persistSoon(); return item;
@@ -157,17 +216,34 @@ function participantView(p) {
   const timer = p.activeTimer ? store.timers.get(p.activeTimer) : null;
   return { ...safe, timerEnd: timer?.endsAt || null };
 }
+function staffView(account) { const { passwordHash, ...safe } = account; return safe; }
 function feature(game, key) { return game?.features?.[key] ?? DEFAULT_FEATURES[key] ?? true; }
 function visibleParticipants(gameId, viewer) {
+  viewer = effectiveViewer(viewer);
   const game = store.games.get(gameId);
   const currentViewer = viewer.participantId ? store.participants.get(viewer.participantId) : null;
   const effectiveTeam = currentViewer?.team || viewer.team;
   return [...store.participants.values()].filter(p => p.gameId === gameId).filter(p => {
-    if (['ADMIN', 'MODERATOR'].includes(viewer.role)) return true;
+    if (viewer.role === 'ADMIN' || can(viewer, 'VIEW_ALL_PLAYERS')) return true;
+    if (viewer.role === 'STAFF' && can(viewer, 'VIEW_TEAM_PLAYERS')) return viewer.team === 'ALL' || p.team === viewer.team;
     if (p.activeSos) return true;
     if (p.id === viewer.participantId) return true;
     return feature(game, 'opforTeamMap') && effectiveTeam === 'OPFOR' && p.team === 'OPFOR';
-  }).map(participantView);
+  }).map(p => {
+    const view = participantView(p);
+    if (viewer.role === 'STAFF' && !can(viewer, 'VIEW_FOV') && view.location) {
+      view.location = { ...view.location, heading: null, headingSource: undefined, speed: undefined };
+    }
+    return view;
+  });
+}
+function visibleMessages(gameId, viewer) {
+  viewer = effectiveViewer(viewer);
+  return store.messages.filter(message => message.gameId === gameId).filter(message => {
+    if (viewer.role === 'ADMIN') return true;
+    if (viewer.role === 'STAFF') return message.senderStaffId === viewer.staffId || message.audience === 'ALL' || message.audience === 'STAFF' || message.audience === viewer.team || message.recipientStaffId === viewer.staffId;
+    return message.senderParticipantId === viewer.participantId || message.audience === 'ALL' || message.audience === viewer.team || message.recipientParticipantId === viewer.participantId;
+  }).slice(-300).reverse();
 }
 function gameByCode(code) { return [...store.games.values()].find(g => g.code === code.toUpperCase()); }
 function pointInPolygon(lat, lon, polygon) {
@@ -178,23 +254,33 @@ function pointInPolygon(lat, lon, polygon) {
   }
   return inside;
 }
+function distanceMeters(lat1, lon1, lat2, lon2) { const r = 6371000, p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180, dp = (lat2-lat1)*Math.PI/180, dl=(lon2-lon1)*Math.PI/180, a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2; return 2*r*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
+function inRespawnZone(game, participant) { return !game.modeSettings?.respawnZoneRequired || (participant.location && game.zones.some(zone => zone.type === 'RESPAWN' && (zone.team === 'ALL' || zone.team === participant.team) && distanceMeters(participant.location.latitude, participant.location.longitude, zone.center[0], zone.center[1]) <= zone.radius)); }
 function activeSos(gameId) {
   return [...store.sos.values()].filter(s => s.gameId === gameId && ['ACTIVE','ACKNOWLEDGED'].includes(s.status));
 }
 function snapshot(gameId, viewer) {
+  viewer = effectiveViewer(viewer);
+  const isStaff = viewer.role === 'STAFF';
   return {
     game: store.games.get(gameId),
     participants: visibleParticipants(gameId, viewer),
-    sos: activeSos(gameId),
-    events: ['ADMIN','MODERATOR'].includes(viewer.role) ? store.events.filter(e => e.gameId === gameId).slice(0, 200) : []
+    sos: viewer.role === 'ADMIN' || can(viewer, 'VIEW_SOS') || viewer.role === 'PARTICIPANT' ? activeSos(gameId) : [],
+    events: viewer.role === 'ADMIN' || can(viewer, 'VIEW_EVENTS') ? store.events.filter(e => e.gameId === gameId).slice(0, 200) : [],
+    messages: visibleMessages(gameId, viewer),
+    contacts: [...store.staff.values()].filter(account => account.gameId === gameId && account.active && account.permissions.includes('RECEIVE_PLAYER_MESSAGES')).map(account => ({ id: account.id, callsign: account.callsign, title: account.title, team: account.team })),
+    staff: viewer.role === 'ADMIN' ? [...store.staff.values()].filter(account => account.gameId === gameId).map(staffView) : undefined,
+    currentStaff: isStaff ? staffView(store.staff.get(viewer.staffId)) : undefined
   };
 }
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, now: new Date().toISOString(), sockets: io.engine.clientsCount }));
+app.get('/api/game-modes', (_req, res) => res.json(GAME_MODES));
+app.get('/api/permissions', auth, requireRole('ADMIN'), (_req, res) => res.json(STAFF_PERMISSIONS));
 app.get('/api/games/:code/public', (req, res) => {
   const game = gameByCode(req.params.code);
   if (!game) return res.status(404).json({ error: 'Nie znaleziono sesji.' });
-  res.json({ id: game.id, code: game.code, name: game.name, state: game.state, features: game.features, participantCount: [...store.participants.values()].filter(p => p.gameId === game.id).length });
+  res.json({ id: game.id, code: game.code, name: game.name, state: game.state, mode: game.mode, modeSettings: game.modeSettings, features: game.features, participantCount: [...store.participants.values()].filter(p => p.gameId === game.id).length });
 });
 app.get('/api/games', auth, requireRole('ADMIN'), (_req, res) => {
   res.json([...store.games.values()].map(game => ({
@@ -218,6 +304,33 @@ app.post('/api/auth/admin', async (req, res) => {
   if (!callsignOk || !passwordOk) return res.status(401).json({ error: 'Nieprawidłowe dane.' });
   res.json({ token: sign({ role: 'ADMIN', callsign: ADMIN_CALLSIGN }), role: 'ADMIN', gameId: demoGame.id });
 });
+app.post('/api/auth/staff', async (req, res) => {
+  const parsed = z.object({ code: z.string().trim().min(4).max(16), username: z.string().trim().min(3).max(32), password: z.string().min(1).max(128) }).safeParse(req.body);
+  const game = parsed.success ? gameByCode(parsed.data.code) : null;
+  const account = game && [...store.staff.values()].find(item => item.gameId === game.id && item.username === parsed.data.username.toLowerCase() && item.active);
+  if (!account || !(await bcrypt.compare(parsed.data.password, account.passwordHash))) return res.status(401).json({ error: 'Nieprawidłowy kod sesji, login lub hasło.' });
+  account.lastLoginAt = new Date().toISOString(); persistSoon();
+  res.json({ token: sign({ role: 'STAFF', staffId: account.id, gameId: game.id }), role: 'STAFF', gameId: game.id, staff: staffView(account) });
+});
+app.get('/api/staff', auth, requireRole('ADMIN'), (req, res) => {
+  const gameId = String(req.query.gameId || '');
+  res.json([...store.staff.values()].filter(account => account.gameId === gameId).map(staffView));
+});
+app.post('/api/staff', auth, requireRole('ADMIN'), async (req, res) => {
+  const parsed = createStaffSchema.safeParse(req.body);
+  if (!parsed.success || !store.games.has(parsed.data?.gameId)) return res.status(400).json({ error: 'Nieprawidłowe dane konta personelu.' });
+  if ([...store.staff.values()].some(account => account.gameId === parsed.data.gameId && account.username === parsed.data.username)) return res.status(409).json({ error: 'Ten login jest już zajęty w tej sesji.' });
+  const account = { id: crypto.randomUUID(), ...parsed.data, passwordHash: await bcrypt.hash(parsed.data.password, 10), active: true, createdAt: new Date().toISOString() };
+  delete account.password; store.staff.set(account.id, account); event(account.gameId, 'STAFF_CREATED', { callsign: account.callsign, title: account.title });
+  persistSoon(); res.status(201).json(staffView(account));
+});
+app.patch('/api/staff/:id', auth, requireRole('ADMIN'), async (req, res) => {
+  const parsed = updateStaffSchema.safeParse(req.body), account = store.staff.get(req.params.id);
+  if (!parsed.success || !account) return res.status(400).json({ error: 'Nieprawidłowa zmiana konta.' });
+  const updates = { ...parsed.data }; if (updates.password) { updates.passwordHash = await bcrypt.hash(updates.password, 10); delete updates.password; }
+  Object.assign(account, updates, { updatedAt: new Date().toISOString() }); event(account.gameId, 'STAFF_CHANGED', { callsign: account.callsign });
+  broadcastState(account.gameId); res.json(staffView(account));
+});
 app.post('/api/games/:code/join', (req, res) => {
   const parsed = joinSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: 'Sprawdź kryptonim, drużynę i zgody.', issues: parsed.error.issues });
@@ -230,7 +343,7 @@ app.post('/api/games/:code/join', (req, res) => {
     id: crypto.randomUUID(), gameId: game.id, callsign: parsed.data.callsign, normalizedCallsign: normalized,
     team: parsed.data.team, status: 'READY', consentVersion: parsed.data.consentVersion,
     consentedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), location: null,
-    timerCount: 0, boundaryCount: 0, activeSos: false
+    timerCount: 0, boundaryCount: 0, hitCount: 0, respawnCount: 0, respawnRequired: false, activeSos: false
   };
   store.participants.set(participant.id, participant);
   event(game.id, 'PARTICIPANT_JOINED', { callsign: participant.callsign, team: participant.team }, participant.id);
@@ -249,7 +362,8 @@ app.patch('/api/games/:id/settings', auth, requireRole('ADMIN'), (req, res) => {
   const game = store.games.get(req.params.id);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowe ustawienia gry.' });
   if (game.state === 'ACTIVE' && parsed.data.boundary) return res.status(409).json({ error: 'Wstrzymaj grę przed zmianą granicy terenu.' });
-  if (parsed.data.code && [...store.games.values()].some(item => item.id !== game.id && item.code === parsed.data.code)) return res.status(409).json({ error: 'Ten kod sesji jest już używany.' });
+  if (parsed.data.mode) parsed.data.modeSettings = { ...defaultModeSettings(parsed.data.mode), ...(parsed.data.modeSettings || {}) };
+  else if (parsed.data.modeSettings) parsed.data.modeSettings = { ...game.modeSettings, ...parsed.data.modeSettings };
   if (parsed.data.features) parsed.data.features = { ...game.features, ...parsed.data.features };
   Object.assign(game, parsed.data);
   event(game.id, 'GAME_SETTINGS_CHANGED', { fields: Object.keys(parsed.data) });
@@ -257,11 +371,37 @@ app.patch('/api/games/:id/settings', auth, requireRole('ADMIN'), (req, res) => {
   io.to(`game:${game.id}`).emit('game:changed', game);
   res.json(game);
 });
-app.patch('/api/participants/:id', auth, requireRole('ADMIN','MODERATOR'), (req, res) => {
+app.patch('/api/games/:id/code', auth, requireRole('ADMIN'), (req, res) => {
+  const parsed = codeSchema.safeParse(req.body), game = store.games.get(req.params.id);
+  if (!parsed.success || !game) return res.status(400).json({ error: 'Kod musi mieć 4–16 znaków: litery, cyfry, _ lub -.' });
+  if ([...store.games.values()].some(item => item.id !== game.id && item.code === parsed.data.code)) return res.status(409).json({ error: 'Ten kod sesji jest już używany.' });
+  const previousCode = game.code; game.code = parsed.data.code; event(game.id, 'SESSION_CODE_CHANGED', { previousCode, code: game.code }); broadcastState(game.id); res.json(game);
+});
+app.patch('/api/games/:id/zones', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  const parsed = z.object({ zones: z.array(zoneSchema).max(100) }).safeParse(req.body), game = store.games.get(req.params.id);
+  if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowe strefy.' });
+  if (req.auth.role === 'STAFF' && (!can(req.auth, 'MANAGE_ZONES') || req.auth.gameId !== game.id)) return res.status(403).json({ error: 'Brak uprawnienia do stref.' });
+  game.zones = parsed.data.zones; event(game.id, 'ZONES_CHANGED', { count: game.zones.length }); broadcastState(game.id); res.json(game);
+});
+app.patch('/api/games/:id/objectives', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  const parsed = z.object({ objectives: z.array(objectiveSchema).max(100) }).safeParse(req.body), game = store.games.get(req.params.id);
+  if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowe cele.' });
+  if (req.auth.role === 'STAFF' && (!can(req.auth, 'MANAGE_OBJECTIVES') || req.auth.gameId !== game.id)) return res.status(403).json({ error: 'Brak uprawnienia do celów.' });
+  game.objectives = parsed.data.objectives; event(game.id, 'OBJECTIVES_CHANGED', { count: game.objectives.length }); broadcastState(game.id); res.json(game);
+});
+app.post('/api/games/:id/score', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  const parsed = z.object({ team: z.enum(['SERE','OPFOR']), delta: z.number().int().min(-1000).max(1000) }).safeParse(req.body), game = store.games.get(req.params.id);
+  if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowa punktacja.' });
+  if (req.auth.role === 'STAFF' && (!can(req.auth, 'MANAGE_OBJECTIVES') || req.auth.gameId !== game.id)) return res.status(403).json({ error: 'Brak uprawnienia do punktacji.' });
+  game.scores[parsed.data.team] = Math.max(0, (game.scores[parsed.data.team] || 0) + parsed.data.delta); event(game.id, 'SCORE_CHANGED', { ...parsed.data, score: game.scores[parsed.data.team] }); broadcastState(game.id); res.json(game.scores);
+});
+app.patch('/api/participants/:id', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  if (req.auth.role === 'STAFF' && !can(req.auth, 'MANAGE_PARTICIPANTS')) return res.status(403).json({ error: 'Brak uprawnienia do zarządzania uczestnikami.' });
   const parsed = participantUpdateSchema.safeParse(req.body);
   const participant = store.participants.get(req.params.id);
   const game = participant && store.games.get(participant.gameId);
   if (!parsed.success || !participant || !game) return res.status(400).json({ error: 'Nieprawidłowa zmiana uczestnika.' });
+  if (req.auth.role === 'STAFF' && req.auth.gameId !== participant.gameId) return res.status(403).json({ error: 'Uczestnik należy do innej sesji.' });
   if (parsed.data.team && (game.state !== 'LOBBY' || !feature(game, 'allowTeamChanges'))) return res.status(409).json({ error: 'Zmiana drużyny jest wyłączona lub gra już się rozpoczęła.' });
   Object.assign(participant, parsed.data);
   event(game.id, 'PARTICIPANT_CHANGED', { callsign: participant.callsign, ...parsed.data }, participant.id);
@@ -284,14 +424,24 @@ app.post('/api/locations', auth, requireRole('PARTICIPANT'), (req, res) => {
   }
   broadcastState(game.id); res.status(202).json({ accepted: true, outside });
 });
+app.post('/api/hits', auth, requireRole('PARTICIPANT'), (req, res) => {
+  const p = store.participants.get(req.auth.participantId), game = store.games.get(p?.gameId);
+  if (!p || !game || game.state !== 'ACTIVE' || !feature(game, 'hitTracking')) return res.status(409).json({ error: 'Rejestrowanie trafień jest teraz wyłączone.' });
+  if (p.respawnRequired || p.activeTimer) return res.status(409).json({ error: 'Najpierw zakończ bieżący respawn.' });
+  p.hitCount = (p.hitCount || 0) + 1; const threshold = game.modeSettings?.hitsToRespawn || 1;
+  if (p.hitCount >= threshold) { p.respawnRequired = true; p.status = 'RESPAWN_WAIT'; event(game.id, 'RESPAWN_REQUIRED', { callsign: p.callsign, hits: p.hitCount }, p.id, 'WARNING'); }
+  else event(game.id, 'HIT_RECORDED', { callsign: p.callsign, hits: p.hitCount, threshold }, p.id, 'INFO');
+  broadcastState(game.id); res.status(201).json({ participant: participantView(p), threshold, respawnRequired: p.respawnRequired });
+});
 app.post('/api/timers', auth, requireRole('PARTICIPANT'), (req, res) => {
   const p = store.participants.get(req.auth.participantId); const game = store.games.get(p?.gameId);
   if (!p || !game || !feature(game, 'timers') || game.state !== 'ACTIVE' || p.activeTimer) return res.status(409).json({ error: 'Timer nie może być teraz uruchomiony.' });
-  const seconds = p.team === 'SERE' ? game.sereTimerSeconds : game.opforTimerSeconds;
+  if (p.respawnRequired && feature(game, 'respawnZones') && !inRespawnZone(game, p)) return res.status(409).json({ error: 'Wejdź do strefy respawnu swojej drużyny.' });
+  const seconds = p.respawnRequired ? (game.modeSettings?.respawnSeconds || 60) : p.team === 'SERE' ? game.sereTimerSeconds : game.opforTimerSeconds;
   const timer = { id: crypto.randomUUID(), gameId: game.id, participantId: p.id, seconds, startedAt: Date.now(), endsAt: Date.now() + seconds * 1000 };
-  store.timers.set(timer.id, timer); p.activeTimer = timer.id; p.timerCount += 1; p.status = p.team === 'SERE' ? 'TIMER' : 'RESPAWN';
+  store.timers.set(timer.id, timer); p.activeTimer = timer.id; p.timerCount += 1; p.status = p.respawnRequired ? 'RESPAWN' : p.team === 'SERE' ? 'TIMER' : 'RESPAWN';
   event(game.id, 'TIMER_STARTED', { callsign: p.callsign, seconds }, p.id); broadcastState(game.id);
-  setTimeout(() => { const current = store.timers.get(timer.id); if (!current || current.completedAt) return; current.completedAt = Date.now(); p.activeTimer = null; p.status = 'ACTIVE'; event(game.id, 'TIMER_FINISHED', { callsign: p.callsign }, p.id); broadcastState(game.id); }, seconds * 1000);
+  setTimeout(() => { const current = store.timers.get(timer.id); if (!current || current.completedAt) return; current.completedAt = Date.now(); p.activeTimer = null; p.status = 'ACTIVE'; if (p.respawnRequired) { p.respawnRequired = false; p.hitCount = 0; p.respawnCount = (p.respawnCount || 0) + 1; } event(game.id, 'TIMER_FINISHED', { callsign: p.callsign }, p.id); broadcastState(game.id); }, seconds * 1000);
   res.status(201).json(timer);
 });
 app.post('/api/sos', auth, requireRole('PARTICIPANT'), (req, res) => {
@@ -302,7 +452,8 @@ app.post('/api/sos', auth, requireRole('PARTICIPANT'), (req, res) => {
   event(game.id, 'SOS_ACTIVATED', { callsign: p.callsign, location: p.location }, p.id, 'CRITICAL');
   io.to(`game:${game.id}`).emit('sos:changed', alert); broadcastState(game.id); res.status(201).json(alert);
 });
-app.patch('/api/sos/:id', auth, requireRole('ADMIN','MODERATOR'), (req, res) => {
+app.patch('/api/sos/:id', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  if (req.auth.role === 'STAFF' && !can(req.auth, 'ACK_SOS')) return res.status(403).json({ error: 'Brak uprawnienia do obsługi SOS.' });
   const status = z.enum(['ACKNOWLEDGED','RESOLVED','FALSE_ALARM']).safeParse(req.body?.status);
   const alert = store.sos.get(req.params.id);
   if (!status.success || !alert) return res.status(400).json({ error: 'Nieprawidłowy alarm lub status.' });
@@ -312,15 +463,18 @@ app.patch('/api/sos/:id', auth, requireRole('ADMIN','MODERATOR'), (req, res) => 
   event(alert.gameId, `SOS_${status.data}`, { callsign: alert.callsign }, alert.participantId, status.data === 'ACKNOWLEDGED' ? 'WARNING' : 'INFO');
   io.to(`game:${alert.gameId}`).emit('sos:changed', alert); broadcastState(alert.gameId); res.json(alert);
 });
-app.post('/api/messages', auth, requireRole('ADMIN'), (req, res) => {
-  const parsed = z.object({ gameId: z.string().uuid(), audience: z.enum(['ALL','SERE','OPFOR']), body: z.string().trim().min(1).max(300) }).safeParse(req.body);
-  const gameId = parsed.success ? parsed.data.gameId : null; const game = store.games.get(gameId);
+app.post('/api/messages', auth, requireRole('ADMIN','STAFF','PARTICIPANT'), (req, res) => {
+  const parsed = z.object({ gameId: z.string().uuid().optional(), audience: z.enum(['ALL','SERE','OPFOR','STAFF','PARTICIPANT']), body: z.string().trim().min(1).max(500), recipientStaffId: z.string().uuid().optional(), recipientParticipantId: z.string().uuid().optional() }).safeParse(req.body);
+  const viewer = effectiveViewer(req.auth), gameId = viewer.gameId || parsed.data?.gameId, game = store.games.get(gameId);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowy komunikat.' });
-  if (!feature(game, 'adminMessages')) return res.status(409).json({ error: 'Komunikaty administratora są wyłączone.' });
-  const message = { id: crypto.randomUUID(), gameId, ...parsed.data, time: Date.now(), createdAt: new Date().toISOString() };
-  event(gameId, 'ADMIN_MESSAGE', { audience: message.audience, body: message.body });
-  io.to(`game:${gameId}`).emit('message:new', message);
-  res.status(201).json(message);
+  if (viewer.role === 'PARTICIPANT' && (!feature(game, 'playerMessaging') || parsed.data.audience !== 'STAFF' || !parsed.data.recipientStaffId)) return res.status(403).json({ error: 'Gracz może pisać wyłącznie do dostępnego dowódcy.' });
+  if (viewer.role === 'STAFF') {
+    const allowed = parsed.data.audience === 'ALL' ? can(viewer, 'SEND_ALL_MESSAGES') : ['SERE','OPFOR'].includes(parsed.data.audience) ? can(viewer, 'SEND_TEAM_MESSAGES') : can(viewer, 'SEND_DIRECT_MESSAGES');
+    if (!allowed) return res.status(403).json({ error: 'Konto nie ma uprawnienia do tego rodzaju wiadomości.' });
+  }
+  const message = { id: crypto.randomUUID(), gameId, ...parsed.data, senderRole: viewer.role, senderName: viewer.callsign || 'GRACZ', senderStaffId: viewer.staffId || null, senderParticipantId: viewer.participantId || null, time: Date.now(), createdAt: new Date().toISOString() };
+  store.messages.push(message); event(gameId, 'MESSAGE_SENT', { audience: message.audience, sender: message.senderName });
+  io.to(`game:${gameId}`).emit('message:new', message); broadcastState(gameId); res.status(201).json(message);
 });
 app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requireRole('ADMIN'), (req, res) => {
   const game = store.games.get(req.params.id);
@@ -330,7 +484,8 @@ app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requir
     for (const [id, timer] of store.timers) if (timer.gameId === game.id) store.timers.delete(id);
     for (const [id, alert] of store.sos) if (alert.gameId === game.id) store.sos.delete(id);
     store.events = store.events.filter(item => item.gameId !== game.id);
-    Object.assign(game, { state: 'LOBBY', startedAt: null, pausedAt: null, finishedAt: null });
+    store.messages = store.messages.filter(item => item.gameId !== game.id);
+    Object.assign(game, { state: 'LOBBY', startedAt: null, pausedAt: null, finishedAt: null, scores: { SERE: 0, OPFOR: 0 } });
     event(game.id, 'GAME_RESET', {});
     io.to(`game:${game.id}`).emit('game:changed', game); broadcastState(game.id); return res.json(game);
   }
@@ -355,11 +510,11 @@ function broadcastState(gameId) {
 
 io.use((socket, next) => { try { socket.auth = jwt.verify(socket.handshake.auth?.token, JWT_SECRET); next(); } catch { next(new Error('unauthorized')); } });
 io.on('connection', socket => {
-  const a = socket.auth; const gameId = a.gameId || socket.handshake.auth?.gameId || demoGame.id;
+  const a = effectiveViewer(socket.auth); const gameId = a.gameId || socket.handshake.auth?.gameId || demoGame.id;
   if (!store.games.has(gameId)) return socket.disconnect(true);
   socket.data.gameId = gameId;
   socket.join(`game:${gameId}`);
-  if (['ADMIN','MODERATOR'].includes(a.role)) socket.join(`game:${gameId}:staff`);
+  if (['ADMIN','STAFF'].includes(a.role)) socket.join(`game:${gameId}:staff`);
   if (a.team) socket.join(`game:${gameId}:team:${a.team}`);
   socket.emit('state:snapshot', snapshot(gameId, a));
 });

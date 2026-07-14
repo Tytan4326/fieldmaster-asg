@@ -134,7 +134,9 @@ test('administrator prowadzi wiele sesji, zmienia kody i funkcje niezależnie', 
   assert.equal(secondJoin.response.status, 201);
   const secondState = await call(`/api/state?gameId=${second.body.id}`, { headers: authHeader });
   assert.deepEqual(secondState.body.participants.map(item => item.team), ['OPFOR']);
-  const changed = await call(`/api/games/${second.body.id}/settings`, { method: 'PATCH', headers: authHeader, body: JSON.stringify({ code: 'ORZEL26', features: { allowJoining: false, sos: false, mgrsGrid: false } }) });
+  const codeChanged = await call(`/api/games/${second.body.id}/code`, { method: 'PATCH', headers: authHeader, body: JSON.stringify({ code: 'ORZEL26' }) });
+  assert.equal(codeChanged.body.code, 'ORZEL26');
+  const changed = await call(`/api/games/${second.body.id}/settings`, { method: 'PATCH', headers: authHeader, body: JSON.stringify({ features: { allowJoining: false, sos: false, mgrsGrid: false } }) });
   assert.equal(changed.body.code, 'ORZEL26');
   assert.equal(changed.body.features.allowJoining, false);
   assert.equal((await call('/api/games/ORZEL25/public')).response.status, 404);
@@ -142,4 +144,47 @@ test('administrator prowadzi wiele sesji, zmienia kody i funkcje niezależnie', 
   assert.equal((await call('/api/sos', { method: 'POST', headers: { Authorization: `Bearer ${secondJoin.body.token}` }, body: '{}' })).response.status, 409);
   const games = await call('/api/games', { headers: authHeader });
   assert.equal(games.body.length, 2);
+});
+
+test('tryby, strefy respawnu, trafienia i uprawnienia personelu działają razem', async t => {
+  const rolePort = 18083, roleBase = `http://127.0.0.1:${rolePort}`;
+  const processChild = spawn(process.execPath, ['server/index.js'], {
+    cwd: process.cwd(),
+    env: { ...process.env, PORT: String(rolePort), NODE_ENV: 'development', ADMIN_PASSWORD: '2468', JWT_SECRET: 'roles-test-secret-at-least-32-characters' },
+    stdio: 'ignore'
+  });
+  t.after(() => processChild.kill());
+  await waitForServer(roleBase);
+  const call = async (route, options = {}) => {
+    const response = await fetch(`${roleBase}${route}`, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    return { response, body: await response.json() };
+  };
+  const admin = await call('/api/auth/admin', { method: 'POST', body: JSON.stringify({ callsign: 'GAME-MASTER', password: '2468' }) });
+  const gameId = admin.body.gameId, adminHeaders = { Authorization: `Bearer ${admin.body.token}` };
+  const settings = await call(`/api/games/${gameId}/settings`, { method: 'PATCH', headers: adminHeaders, body: JSON.stringify({ mode: 'TEAM_DEATHMATCH', modeSettings: { hitsToRespawn: 2, respawnSeconds: 5, respawnZoneRequired: true } }) });
+  assert.equal(settings.body.mode, 'TEAM_DEATHMATCH');
+  assert.equal(settings.body.modeSettings.hitsToRespawn, 2);
+  const zone = { id: crypto.randomUUID(), name: 'Baza SERE', type: 'RESPAWN', team: 'SERE', center: [52.2304, 21.0184], radius: 150, color: '#a3ff4f' };
+  assert.equal((await call(`/api/games/${gameId}/zones`, { method: 'PATCH', headers: adminHeaders, body: JSON.stringify({ zones: [zone] }) })).response.status, 200);
+  const staff = await call('/api/staff', { method: 'POST', headers: adminHeaders, body: JSON.stringify({ gameId, username: 'dowodca', callsign: 'ALFA-1', password: 'Bezpieczne123', title: 'Dowódca SERE', team: 'SERE', permissions: ['VIEW_ALL_PLAYERS','VIEW_FOV','SEND_TEAM_MESSAGES','RECEIVE_PLAYER_MESSAGES','MANAGE_OBJECTIVES'] }) });
+  assert.equal(staff.response.status, 201);
+  const staffLogin = await call('/api/auth/staff', { method: 'POST', body: JSON.stringify({ code: 'WILK24', username: 'dowodca', password: 'Bezpieczne123' }) });
+  assert.equal(staffLogin.response.status, 200);
+  const staffHeaders = { Authorization: `Bearer ${staffLogin.body.token}` };
+  const sere = await call('/api/games/WILK24/join', { method: 'POST', body: JSON.stringify({ callsign: 'RAVEN-2', team: 'SERE', consent: true, consentVersion: 'test' }) });
+  const opfor = await call('/api/games/WILK24/join', { method: 'POST', body: JSON.stringify({ callsign: 'VIPER-2', team: 'OPFOR', consent: true, consentVersion: 'test' }) });
+  assert.equal(sere.response.status, 201);assert.equal(opfor.response.status, 201);
+  const visible = await call('/api/state', { headers: staffHeaders });
+  assert.deepEqual(new Set(visible.body.participants.map(item => item.callsign)), new Set(['RAVEN-2','VIPER-2']));
+  assert.equal((await call(`/api/participants/${sere.body.participant.id}`, { method: 'PATCH', headers: staffHeaders, body: JSON.stringify({ status: 'CAPTURED' }) })).response.status, 403);
+  const playerHeaders = { Authorization: `Bearer ${sere.body.token}` };
+  assert.equal((await call('/api/messages', { method: 'POST', headers: playerHeaders, body: JSON.stringify({ audience: 'STAFF', recipientStaffId: staff.body.id, body: 'Kontakt z dowódcą działa.' }) })).response.status, 201);
+  assert.equal((await call('/api/state', { headers: staffHeaders })).body.messages[0].body, 'Kontakt z dowódcą działa.');
+  await call(`/api/games/${gameId}/start`, { method: 'POST', headers: adminHeaders, body: '{}' });
+  assert.equal((await call('/api/locations', { method: 'POST', headers: playerHeaders, body: JSON.stringify({ latitude: 52.2304, longitude: 21.0184, accuracy: 4, heading: 95, headingSource: 'GPS', timestamp: new Date().toISOString() }) })).response.status, 202);
+  assert.equal((await call('/api/hits', { method: 'POST', headers: playerHeaders, body: '{}' })).body.respawnRequired, false);
+  assert.equal((await call('/api/hits', { method: 'POST', headers: playerHeaders, body: '{}' })).body.respawnRequired, true);
+  const timer = await call('/api/timers', { method: 'POST', headers: playerHeaders, body: '{}' });
+  assert.equal(timer.response.status, 201);assert.equal(timer.body.seconds, 5);
+  assert.equal((await call(`/api/games/${gameId}/score`, { method: 'POST', headers: staffHeaders, body: JSON.stringify({ team: 'SERE', delta: 3 }) })).body.SERE, 3);
 });
