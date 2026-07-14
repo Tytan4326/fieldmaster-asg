@@ -58,8 +58,9 @@ Plik `render.yaml` jest gotowy do wdrożenia typu Blueprint w Render po umieszcz
 Publiczne wdrożenie:
 
 - aplikacja: `https://fieldmaster-t8t4.onrender.com/`
-- panel administratora: `https://fieldmaster-t8t4.onrender.com/?view=admin`
-- dołączenie uczestnika: `https://fieldmaster-t8t4.onrender.com/?view=join`
+- aplikacja dowódcy / personelu: `https://fieldmaster-t8t4.onrender.com/staff.html`
+- aplikacja Mistrza Gry: `https://fieldmaster-t8t4.onrender.com/admin.html`
+- dołączenie uczestnika: `https://fieldmaster-t8t4.onrender.com/`
 - kryptonim administratora: `GAME-MASTER`
 - hasło administratora jest zapisane wyłącznie w lokalnym, ignorowanym przez Git pliku `.env`
 
