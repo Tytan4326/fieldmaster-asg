@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 DO $$ BEGIN
   CREATE TYPE game_state AS ENUM ('DRAFT','LOBBY','ACTIVE','PAUSED','FINISHED');
   CREATE TYPE team AS ENUM ('SERE','OPFOR');
-  CREATE TYPE participant_status AS ENUM ('WAITING','READY','ACTIVE','TIMER','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED');
+  CREATE TYPE participant_status AS ENUM ('WAITING','READY','ACTIVE','TIMER','RESPAWN_WAIT','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE TABLE IF NOT EXISTS games (
@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS participants (
   callsign text NOT NULL,
   normalized_callsign text NOT NULL,
   team team NOT NULL,
+  role text NOT NULL DEFAULT 'OPERATOR',
   status participant_status NOT NULL DEFAULT 'READY',
   consent_version text NOT NULL,
   consented_at timestamptz NOT NULL,
@@ -92,9 +93,36 @@ CREATE TABLE IF NOT EXISTS sos_alerts (
 CREATE TABLE IF NOT EXISTS messages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-  audience text NOT NULL CHECK (audience IN ('ALL','SERE','OPFOR','PARTICIPANT')),
-  participant_id uuid REFERENCES participants(id) ON DELETE CASCADE,
+  audience text NOT NULL CHECK (audience IN ('ALL','SERE','OPFOR','STAFF','PARTICIPANT')),
+  sender_participant_id uuid REFERENCES participants(id) ON DELETE SET NULL,
+  recipient_participant_id uuid REFERENCES participants(id) ON DELETE SET NULL,
+  sender_staff_id uuid,
+  recipient_staff_id uuid,
   body text NOT NULL CHECK (length(body) BETWEEN 1 AND 1000),
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS zones (
+  id uuid PRIMARY KEY,
+  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  type text NOT NULL,
+  team text NOT NULL,
+  geometry jsonb NOT NULL,
+  sequence integer,
+  objective_id uuid,
+  runtime jsonb NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS objectives (
+  id uuid PRIMARY KEY,
+  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  description text,
+  team text NOT NULL,
+  points integer NOT NULL DEFAULT 0,
+  status text NOT NULL DEFAULT 'PENDING',
+  zone_id uuid,
+  progress real NOT NULL DEFAULT 0,
+  visibility text NOT NULL DEFAULT 'ALL'
+);

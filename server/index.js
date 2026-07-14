@@ -32,13 +32,19 @@ const DEFAULT_FEATURES = Object.freeze({
   backgroundTrackingAid: true, screenWakeLock: true, pushNotifications: true,
   reconnectRecovery: true, stableMapRendering: true, gpsQualityWarnings: true,
   hardwareTimerShortcut: false, automaticCheckpoints: false, stealthMode: false,
-  fogOfWar: false, medicSystem: false, ammoLogistics: false
+  fogOfWar: false, medicSystem: false, ammoLogistics: false,
+  mgrsAdmin: true, mgrsStaff: true, mgrsPlayer: true,
+  routeReplay: true, modeIntel: true, zoneInteractions: true, stateAwareMarkers: true,
+  messageNotifications: true, sosBroadcastAlarms: true
 });
 const FEATURE_KEYS = Object.keys(DEFAULT_FEATURES);
 const STAFF_PERMISSIONS = Object.freeze([
   'VIEW_ALL_PLAYERS','VIEW_TEAM_PLAYERS','VIEW_FOV','VIEW_EVENTS','VIEW_SOS',
+  'VIEW_PLAYER_STATUS','VIEW_COORDINATES','VIEW_BATTERY','VIEW_ACCURACY','VIEW_TRACKS','VIEW_REPLAY','VIEW_MODE_INTEL',
   'SEND_ALL_MESSAGES','SEND_TEAM_MESSAGES','SEND_DIRECT_MESSAGES','RECEIVE_PLAYER_MESSAGES',
-  'MANAGE_PARTICIPANTS','MANAGE_ZONES','MANAGE_RESPAWNS','MANAGE_OBJECTIVES','ACK_SOS','VIEW_REPORTS'
+  'MANAGE_PARTICIPANTS','MANAGE_TEAMS','MANAGE_ZONES','MANAGE_RESPAWNS','MANAGE_OBJECTIVES','MANAGE_FLAGS',
+  'MANAGE_CHECKPOINTS','MANAGE_MODE_RULES','MANAGE_GAME_STATE','MANAGE_MESSAGES','ACK_SOS','TRIGGER_NOTIFICATIONS',
+  'VIEW_REPORTS','EXPORT_REPORTS'
 ]);
 const commonMode = (overrides, modeRules) => ({
   hitsToRespawn: 1, respawnSeconds: 60, respawnZoneRequired: true, lives: 0,
@@ -54,7 +60,7 @@ const GAME_MODES = Object.freeze({
   TEAM_DEATHMATCH: { name: 'Team Deathmatch', description: 'Punktowana walka drużynowa z falami respawnu.', defaults: commonMode({ respawnSeconds: 30, scoreLimit: 100, roundMinutes: 60, fovRange: 130, fovAngle: 60 }, { pointsPerHit: 1, waveRespawnSeconds: 60, friendlyFire: false }) },
   BOMB_DEFUSAL: { name: 'Podłożenie ładunku', description: 'Atakujący podkładają ładunek, obrońcy próbują go rozbroić.', defaults: commonMode({ lives: 1, scoreLimit: 7, roundMinutes: 45 }, { plantSeconds: 15, defuseSeconds: 20, bombTimerSeconds: 300, roundsToWin: 4 }) },
   KING_HILL: { name: 'Król wzgórza', description: 'Utrzymanie ruchomej strefy daje punkty drużynie.', defaults: commonMode({ hitsToRespawn: 2, respawnSeconds: 45, scoreLimit: 600, roundMinutes: 100 }, { captureSeconds: 30, pointsPerMinute: 20, hillMoveMinutes: 15 }) },
-  CONVOY_AMBUSH: { name: 'Konwój / Zasadzka', description: 'Eskorta prowadzi konwój przez kolejne punkty kontrolne.', defaults: commonMode({ lives: 3, scoreLimit: 5, roundMinutes: 150 }, { convoyLives: 3, checkpointCount: 5, ambushDelayMinutes: 10 }) },
+  CONVOY_AMBUSH: { name: 'Konwój / Zasadzka', description: 'Eskorta prowadzi konwój przez kolejne punkty kontrolne.', defaults: commonMode({ lives: 3, scoreLimit: 5, roundMinutes: 150 }, { convoyLives: 3, ambushDelayMinutes: 10 }) },
   INFECTION: { name: 'Infekcja', description: 'Trafieni przechodzą do rosnącej drużyny zainfekowanych.', defaults: commonMode({ respawnSeconds: 15, roundMinutes: 90 }, { initialInfected: 2, conversionSeconds: 30, survivorWinMinutes: 60 }) },
   MEDIC_RESCUE: { name: 'Medyk / Ratunek', description: 'Drużyny stabilizują rannych i ewakuują ich do punktu medycznego.', defaults: commonMode({ hitsToRespawn: 2, respawnSeconds: 120, lives: 2, roundMinutes: 180 }, { bleedoutSeconds: 300, reviveSeconds: 60, medicLives: 3 }) },
   SUPPLY_DROP: { name: 'Zrzut zaopatrzenia', description: 'Zespoły odnajdują, przenoszą i zabezpieczają skrzynie.', defaults: commonMode({ scoreLimit: 5, roundMinutes: 120 }, { cratesToWin: 5, dropRevealMinutes: 10, carryLimit: 1 }) }
@@ -80,8 +86,10 @@ const boundary = [
 // Store demonstracyjny. Interfejs repozytorium jest celowo mały, aby podmienić go
 // na transakcje PostgreSQL zgodnie z server/schema.sql bez zmiany kontrolerów.
 const store = {
-  games: new Map(), participants: new Map(), staff: new Map(), events: [], messages: [], timers: new Map(), sos: new Map()
+  games: new Map(), participants: new Map(), staff: new Map(), events: [], messages: [], tracks: [], timers: new Map(), sos: new Map()
 };
+const timerTimeouts = new Map();
+const zoneTimeouts = new Map();
 let persistenceTimer;
 function persistSoon() {
   if (!DATA_FILE) return;
@@ -89,7 +97,7 @@ function persistSoon() {
   persistenceTimer = setTimeout(() => {
     const payload = {
       games: [...store.games.values()], participants: [...store.participants.values()], staff: [...store.staff.values()],
-      events: store.events.slice(0, 10_000), messages: store.messages.slice(0, 10_000), timers: [...store.timers.values()], sos: [...store.sos.values()]
+      events: store.events.slice(0, 10_000), messages: store.messages.slice(0, 10_000), tracks: store.tracks.slice(-100_000), timers: [...store.timers.values()], sos: [...store.sos.values()]
     };
     fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
     const temporary = `${DATA_FILE}.tmp`;
@@ -115,7 +123,7 @@ function restoreState() {
     for (const item of data.staff || []) store.staff.set(item.id, item);
     for (const item of data.timers || []) store.timers.set(item.id, { ...item, cancelledAt: item.cancelledAt || Date.now() });
     for (const item of data.sos || []) store.sos.set(item.id, item);
-    store.events = data.events || []; store.messages = data.messages || [];
+    store.events = data.events || []; store.messages = data.messages || []; store.tracks = data.tracks || [];
     return store.games.size > 0;
   } catch (error) {
     console.error('Nie udało się odczytać stanu lokalnego:', error.message);
@@ -167,15 +175,19 @@ const locationSchema = z.object({
 });
 const zoneSchema = z.object({
   id: z.string().uuid(), name: z.string().trim().min(2).max(50),
-  type: z.enum(['RESPAWN','OBJECTIVE','SAFE','EXTRACTION','FLAG','CONTROL','DANGER']),
+  type: z.enum(['RESPAWN','OBJECTIVE','SAFE','EXTRACTION','FLAG','CONTROL','DANGER','CHECKPOINT','BOMB_SITE','SUPPLY','MEDICAL','START','HILL']),
   team: z.enum(['ALL','SERE','OPFOR']), center: z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)]),
   radius: z.number().int().min(10).max(10_000), color: z.string().regex(/^#[0-9a-f]{6}$/i).default('#a3ff4f'),
   shape: z.enum(['CIRCLE','POLYGON']).default('CIRCLE'),
-  points: z.array(z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)])).max(100).optional()
+  points: z.array(z.tuple([z.number().min(-90).max(90), z.number().min(-180).max(180)])).max(100).optional(),
+  sequence: z.number().int().min(1).max(100).optional(), objectiveId: z.string().uuid().nullable().optional(),
+  ownerTeam: z.enum(['SERE','OPFOR']).nullable().optional(), carrierParticipantId: z.string().uuid().nullable().optional(),
+  capturingTeam: z.enum(['SERE','OPFOR']).nullable().optional(), captureStartedAt: z.number().nullable().optional(), captureEndsAt: z.number().nullable().optional(),
+  completedByTeam: z.enum(['SERE','OPFOR']).nullable().optional(), completedAt: z.number().nullable().optional()
 }).superRefine((zone, context) => {
   if (zone.shape === 'POLYGON' && (!zone.points || zone.points.length < 3)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['points'], message: 'Strefa wielokątna wymaga co najmniej 3 punktów.' });
 });
-const objectiveSchema = z.object({ id: z.string().uuid(), name: z.string().trim().min(2).max(80), team: z.enum(['ALL','SERE','OPFOR']), points: z.number().int().min(0).max(10_000), status: z.enum(['PENDING','ACTIVE','COMPLETED','FAILED']) });
+const objectiveSchema = z.object({ id: z.string().uuid(), name: z.string().trim().min(2).max(80), description: z.string().trim().max(500).optional(), team: z.enum(['ALL','SERE','OPFOR']), points: z.number().int().min(0).max(10_000), status: z.enum(['PENDING','ACTIVE','COMPLETED','FAILED']), zoneId: z.string().uuid().nullable().optional(), progress: z.number().min(0).max(100).optional(), visibility: z.enum(['ALL','TEAM','COMMAND','GM']).optional() });
 const modeSettingsSchema = z.object({
   hitsToRespawn: z.number().int().min(1).max(20), respawnSeconds: z.number().int().min(5).max(1800),
   respawnZoneRequired: z.boolean(), lives: z.number().int().min(0).max(100), scoreLimit: z.number().int().min(0).max(100_000),
@@ -200,7 +212,7 @@ const createGameSchema = z.object({
 });
 const participantUpdateSchema = z.object({
   status: z.enum(['WAITING','READY','ACTIVE','TIMER','RESPAWN_WAIT','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED']).optional(),
-  team: z.enum(['SERE','OPFOR']).optional(), hitCount: z.number().int().min(0).max(100).optional(), respawnRequired: z.boolean().optional()
+  team: z.enum(['SERE','OPFOR']).optional(), role: z.enum(['OPERATOR','COMMANDER','MEDIC','ENGINEER','VIP','CONVOY','SCOUT','REFEREE']).optional(), hitCount: z.number().int().min(0).max(100).optional(), respawnRequired: z.boolean().optional()
 }).refine(value => Object.keys(value).length > 0);
 const permissionSchema = z.array(z.enum(STAFF_PERMISSIONS)).max(STAFF_PERMISSIONS.length);
 const createStaffSchema = z.object({
@@ -256,16 +268,32 @@ function visibleParticipants(gameId, viewer) {
     if (viewer.role === 'STAFF' && !can(viewer, 'VIEW_FOV') && view.location) {
       view.location = { ...view.location, heading: null, headingSource: undefined, speed: undefined };
     }
+    if (viewer.role === 'STAFF' && !can(viewer, 'VIEW_COORDINATES')) view.location = null;
+    if (viewer.role === 'STAFF' && !can(viewer, 'VIEW_BATTERY')) view.battery = null;
+    if (viewer.role === 'STAFF' && !can(viewer, 'VIEW_ACCURACY') && view.location) view.location = { ...view.location, accuracy: null };
+    if (viewer.role === 'STAFF' && !can(viewer, 'VIEW_PLAYER_STATUS')) {
+      view.status = 'HIDDEN'; view.hitCount = null; view.respawnCount = null; view.respawnRequired = null; view.timerEnd = null;
+    }
+    if (view.carriedFlagId) {
+      const flagVisibility = game.modeSettings?.modeRules?.flagCarrierVisibility || (game.modeSettings?.modeRules?.carrierVisible ? 'ALL' : 'COMMAND');
+      const maySeeFlag = viewer.role === 'ADMIN' || p.id === viewer.participantId || flagVisibility === 'ALL' || (flagVisibility === 'TEAM' && effectiveTeam === p.team) || (viewer.role === 'STAFF' && can(viewer, 'VIEW_MODE_INTEL'));
+      if (!maySeeFlag) view.carriedFlagId = null;
+    }
     return view;
   });
 }
-function visibleMessages(gameId, viewer) {
+function messageVisibleTo(message, viewer) {
   viewer = effectiveViewer(viewer);
-  return store.messages.filter(message => message.gameId === gameId).filter(message => {
-    if (viewer.role === 'ADMIN') return true;
-    if (viewer.role === 'STAFF') return message.senderStaffId === viewer.staffId || message.audience === 'ALL' || message.audience === 'STAFF' || message.audience === viewer.team || message.recipientStaffId === viewer.staffId;
-    return message.senderParticipantId === viewer.participantId || message.audience === 'ALL' || message.audience === viewer.team || message.recipientParticipantId === viewer.participantId;
-  }).slice(-300).reverse();
+  if (viewer.role === 'ADMIN') return true;
+  if (viewer.role === 'STAFF') {
+    if (message.senderStaffId === viewer.staffId || message.recipientStaffId === viewer.staffId) return true;
+    if (message.audience === 'ALL' || message.audience === viewer.team) return true;
+    return message.audience === 'STAFF' && !message.recipientStaffId;
+  }
+  return message.senderParticipantId === viewer.participantId || message.recipientParticipantId === viewer.participantId || message.audience === 'ALL' || message.audience === viewer.team;
+}
+function visibleMessages(gameId, viewer) {
+  return store.messages.filter(message => message.gameId === gameId && messageVisibleTo(message, viewer)).slice(-300).reverse();
 }
 function gameByCode(code) { return [...store.games.values()].find(g => g.code === code.toUpperCase()); }
 function pointInPolygon(lat, lon, polygon) {
@@ -277,6 +305,12 @@ function pointInPolygon(lat, lon, polygon) {
   return inside;
 }
 function distanceMeters(lat1, lon1, lat2, lon2) { const r = 6371000, p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180, dp = (lat2-lat1)*Math.PI/180, dl=(lon2-lon1)*Math.PI/180, a=Math.sin(dp/2)**2+Math.cos(p1)*Math.cos(p2)*Math.sin(dl/2)**2; return 2*r*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
+function participantInsideZone(participant, zone) {
+  if (!participant?.location || !zone) return false;
+  return zone.shape === 'POLYGON' && zone.points?.length >= 3
+    ? pointInPolygon(participant.location.latitude, participant.location.longitude, zone.points)
+    : distanceMeters(participant.location.latitude, participant.location.longitude, zone.center[0], zone.center[1]) <= zone.radius;
+}
 function inRespawnZone(game, participant) {
   if (!game.modeSettings?.respawnZoneRequired) return true;
   if (!participant.location) return false;
@@ -289,11 +323,51 @@ function inRespawnZone(game, participant) {
 function activeSos(gameId) {
   return [...store.sos.values()].filter(s => s.gameId === gameId && ['ACTIVE','ACKNOWLEDGED'].includes(s.status));
 }
+function finishTimer(timer) {
+  const current = store.timers.get(timer.id), p = current && store.participants.get(current.participantId);
+  if (!current || current.completedAt || !p) return;
+  current.completedAt = Date.now(); p.activeTimer = null; p.status = 'ACTIVE';
+  if (current.kind === 'RESPAWN' || p.respawnRequired) { p.respawnRequired = false; p.hitCount = 0; p.respawnCount = (p.respawnCount || 0) + 1; }
+  event(current.gameId, 'TIMER_FINISHED', { callsign: p.callsign }, p.id); timerTimeouts.delete(current.id); broadcastState(current.gameId);
+}
+function scheduleTimer(timer) {
+  clearTimeout(timerTimeouts.get(timer.id));
+  timerTimeouts.set(timer.id, setTimeout(() => finishTimer(timer), Math.max(0, timer.endsAt - Date.now())));
+}
+function updateActiveTimerDurations(game, changes) {
+  for (const timer of store.timers.values()) {
+    if (timer.gameId !== game.id || timer.completedAt) continue;
+    const p = store.participants.get(timer.participantId); if (!p) continue;
+    const kind = timer.kind || (p.respawnRequired ? 'RESPAWN' : p.team === 'SERE' ? 'SERE' : 'OPFOR');
+    const seconds = kind === 'RESPAWN' ? changes.modeSettings?.respawnSeconds : kind === 'SERE' ? changes.sereTimerSeconds : changes.opforTimerSeconds;
+    if (!Number.isFinite(seconds)) continue;
+    timer.kind = kind; timer.seconds = seconds; timer.endsAt = timer.startedAt + seconds * 1000; scheduleTimer(timer);
+  }
+}
+function gameForViewer(game, viewer) {
+  viewer = effectiveViewer(viewer);
+  if (!game) return game;
+  const current = viewer.participantId ? store.participants.get(viewer.participantId) : null;
+  const visibility = game.modeSettings?.modeRules?.flagCarrierVisibility || (game.modeSettings?.modeRules?.carrierVisible ? 'ALL' : 'COMMAND');
+  const maySeeCarrier = viewer.role === 'ADMIN' || (viewer.role === 'STAFF' && can(viewer, 'VIEW_MODE_INTEL')) || visibility === 'ALL';
+  const objectives = (game.objectives || []).filter(objective => {
+    const visibility = objective.visibility || 'ALL';
+    if (viewer.role === 'ADMIN' || visibility === 'ALL') return true;
+    if (viewer.role === 'STAFF') return visibility === 'COMMAND' || can(viewer, 'VIEW_MODE_INTEL') || (visibility === 'TEAM' && (viewer.team === 'ALL' || viewer.team === objective.team));
+    return visibility === 'TEAM' && (objective.team === 'ALL' || current?.team === objective.team);
+  });
+  return { ...game, objectives, zones: (game.zones || []).map(zone => {
+    if (!zone.carrierParticipantId || maySeeCarrier) return zone;
+    const carrier = store.participants.get(zone.carrierParticipantId);
+    if (visibility === 'TEAM' && current?.team === carrier?.team) return zone;
+    return { ...zone, carrierParticipantId: null };
+  }) };
+}
 function snapshot(gameId, viewer) {
   viewer = effectiveViewer(viewer);
   const isStaff = viewer.role === 'STAFF';
   return {
-    game: store.games.get(gameId),
+    game: gameForViewer(store.games.get(gameId), viewer),
     participants: visibleParticipants(gameId, viewer),
     sos: viewer.role === 'ADMIN' || can(viewer, 'VIEW_SOS') || viewer.role === 'PARTICIPANT' ? activeSos(gameId) : [],
     events: viewer.role === 'ADMIN' || can(viewer, 'VIEW_EVENTS') ? store.events.filter(e => e.gameId === gameId).slice(0, 200) : [],
@@ -378,7 +452,7 @@ app.post('/api/games/:code/join', (req, res) => {
   if (duplicate) return res.status(409).json({ error: 'Ten kryptonim jest już zajęty.' });
   const participant = {
     id: crypto.randomUUID(), gameId: game.id, callsign: parsed.data.callsign, normalizedCallsign: normalized,
-    team: parsed.data.team, status: 'READY', consentVersion: parsed.data.consentVersion,
+    team: parsed.data.team, role: 'OPERATOR', status: 'READY', consentVersion: parsed.data.consentVersion,
     consentedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), location: null,
     timerCount: 0, boundaryCount: 0, hitCount: 0, respawnCount: 0, respawnRequired: false, activeSos: false
   };
@@ -394,10 +468,20 @@ app.get('/api/state', auth, (req, res) => {
   if (!game) return res.status(404).json({ error: 'Nie znaleziono sesji.' });
   res.json(snapshot(gameId, req.auth));
 });
-app.patch('/api/games/:id/settings', auth, requireRole('ADMIN'), (req, res) => {
+app.get('/api/games/:id/replay', auth, requireRole('ADMIN','STAFF'), (req, res) => {
+  const game = store.games.get(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Nie znaleziono sesji.' });
+  if (req.auth.role === 'STAFF' && (!can(req.auth, 'VIEW_REPLAY') || req.auth.gameId !== game.id)) return res.status(403).json({ error: 'Brak uprawnienia do zapisu trasy.' });
+  const participantIndex = new Map([...store.participants.values()].filter(p => p.gameId === game.id).map(p => [p.id, { id: p.id, callsign: p.callsign, team: p.team, role: p.role || 'OPERATOR' }]));
+  for (const point of store.tracks) if (point.gameId === game.id && !participantIndex.has(point.participantId)) participantIndex.set(point.participantId, { id: point.participantId, callsign: point.callsign || 'GRACZ', team: point.team || 'SERE', role: point.role || 'OPERATOR' });
+  const participants = [...participantIndex.values()];
+  res.json({ game: { id: game.id, code: game.code, name: game.name, startedAt: game.startedAt, finishedAt: game.finishedAt }, participants, tracks: store.tracks.filter(point => point.gameId === game.id) });
+});
+app.patch('/api/games/:id/settings', auth, requireRole('ADMIN','STAFF'), (req, res) => {
   const parsed = settingsSchema.safeParse(req.body);
   const game = store.games.get(req.params.id);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowe ustawienia gry.' });
+  if (req.auth.role === 'STAFF' && (req.auth.gameId !== game.id || !can(req.auth, 'MANAGE_MODE_RULES') || Object.keys(parsed.data).some(key => !['mode','modeSettings'].includes(key)))) return res.status(403).json({ error: 'Personel może zmieniać wyłącznie reguły trybu z odpowiednim uprawnieniem.' });
   if (game.state === 'ACTIVE' && parsed.data.boundary) return res.status(409).json({ error: 'Wstrzymaj grę przed zmianą granicy terenu.' });
   if (parsed.data.mode) {
     const defaults = defaultModeSettings(parsed.data.mode);
@@ -407,6 +491,7 @@ app.patch('/api/games/:id/settings', auth, requireRole('ADMIN'), (req, res) => {
   }
   if (parsed.data.features) parsed.data.features = { ...game.features, ...parsed.data.features };
   Object.assign(game, parsed.data);
+  updateActiveTimerDurations(game, parsed.data);
   event(game.id, 'GAME_SETTINGS_CHANGED', { fields: Object.keys(parsed.data) });
   broadcastState(game.id);
   io.to(`game:${game.id}`).emit('game:changed', game);
@@ -422,6 +507,8 @@ app.patch('/api/games/:id/zones', auth, requireRole('ADMIN','STAFF'), (req, res)
   const parsed = z.object({ zones: z.array(zoneSchema).max(100) }).safeParse(req.body), game = store.games.get(req.params.id);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowe strefy.' });
   if (req.auth.role === 'STAFF' && (!can(req.auth, 'MANAGE_ZONES') || req.auth.gameId !== game.id)) return res.status(403).json({ error: 'Brak uprawnienia do stref.' });
+  if (req.auth.role === 'STAFF' && parsed.data.zones.some(zone => zone.type === 'FLAG') && !can(req.auth, 'MANAGE_FLAGS')) return res.status(403).json({ error: 'Brak uprawnienia do flag.' });
+  if (req.auth.role === 'STAFF' && parsed.data.zones.some(zone => zone.type === 'CHECKPOINT') && !can(req.auth, 'MANAGE_CHECKPOINTS')) return res.status(403).json({ error: 'Brak uprawnienia do checkpointów.' });
   game.zones = parsed.data.zones; event(game.id, 'ZONES_CHANGED', { count: game.zones.length }); broadcastState(game.id); res.json(game);
 });
 app.patch('/api/games/:id/objectives', auth, requireRole('ADMIN','STAFF'), (req, res) => {
@@ -430,6 +517,57 @@ app.patch('/api/games/:id/objectives', auth, requireRole('ADMIN','STAFF'), (req,
   if (req.auth.role === 'STAFF' && (!can(req.auth, 'MANAGE_OBJECTIVES') || req.auth.gameId !== game.id)) return res.status(403).json({ error: 'Brak uprawnienia do celów.' });
   game.objectives = parsed.data.objectives; event(game.id, 'OBJECTIVES_CHANGED', { count: game.objectives.length }); broadcastState(game.id); res.json(game);
 });
+app.post('/api/zones/:id/interact', auth, requireRole('PARTICIPANT'), (req, res) => {
+  const p = store.participants.get(req.auth.participantId), game = store.games.get(p?.gameId), zone = game?.zones?.find(item => item.id === req.params.id);
+  if (!p || !game || !zone || !feature(game, 'zoneInteractions')) return res.status(404).json({ error: 'Ta strefa nie jest dostępna.' });
+  if (game.state !== 'ACTIVE') return res.status(409).json({ error: 'Interakcje stref działają podczas aktywnej gry.' });
+  if (!participantInsideZone(p, zone)) return res.status(409).json({ error: 'Podejdź do strefy, aby wykonać tę akcję.' });
+  if (zone.type === 'RESPAWN') return res.json({ action: 'RESPAWN_READY', zone, message: p.respawnRequired ? 'Możesz uruchomić timer respawnu.' : 'Jesteś w strefie respawnu.' });
+  if (zone.type === 'FLAG') {
+    if (p.carriedFlagId && zone.team === p.team) {
+      const captured = game.zones.find(item => item.id === p.carriedFlagId);
+      if (captured) { captured.carrierParticipantId = null; captured.completedAt = Date.now(); captured.completedByTeam = p.team; }
+      p.carriedFlagId = null; game.scores[p.team] = (game.scores[p.team] || 0) + 1;
+      event(game.id, 'FLAG_CAPTURED', { callsign: p.callsign, team: p.team, zone: captured?.name, score: game.scores[p.team] }, p.id, 'WARNING');
+      broadcastState(game.id); return res.json({ action: 'FLAG_SCORED', zone, scores: game.scores });
+    }
+    if (zone.team === p.team) return res.status(409).json({ error: 'To flaga Twojej drużyny.' });
+    if (zone.carrierParticipantId && zone.carrierParticipantId !== p.id) return res.status(409).json({ error: 'Ta flaga jest już przenoszona.' });
+    zone.carrierParticipantId = p.id; zone.completedAt = null; zone.completedByTeam = null; p.carriedFlagId = zone.id;
+    event(game.id, 'FLAG_TAKEN', { callsign: p.callsign, team: p.team, zone: zone.name }, p.id, 'WARNING');
+    broadcastState(game.id); return res.json({ action: 'FLAG_TAKEN', zone });
+  }
+  if (['CONTROL','HILL'].includes(zone.type)) {
+    if (zone.ownerTeam === p.team) return res.json({ action: 'ALREADY_CONTROLLED', zone });
+    const seconds = Math.max(5, Number(game.modeSettings?.modeRules?.captureSeconds || 30));
+    zone.capturingTeam = p.team; zone.captureStartedAt = Date.now(); zone.captureEndsAt = Date.now() + seconds * 1000;
+    clearTimeout(zoneTimeouts.get(zone.id));
+    zoneTimeouts.set(zone.id, setTimeout(() => {
+      if (zone.capturingTeam !== p.team || zone.captureEndsAt > Date.now() + 500) return;
+      zone.ownerTeam = p.team; zone.capturingTeam = null; zone.captureStartedAt = null; zone.captureEndsAt = null;
+      game.scores[p.team] = (game.scores[p.team] || 0) + Number(game.modeSettings?.modeRules?.pointsPerCapture || 1);
+      event(game.id, 'ZONE_CAPTURED', { callsign: p.callsign, team: p.team, zone: zone.name }, p.id, 'WARNING'); broadcastState(game.id);
+    }, seconds * 1000));
+    event(game.id, 'ZONE_CAPTURE_STARTED', { callsign: p.callsign, team: p.team, zone: zone.name, seconds }, p.id); broadcastState(game.id);
+    return res.json({ action: 'CAPTURE_STARTED', zone });
+  }
+  if (zone.type === 'CHECKPOINT') {
+    if (zone.team !== 'ALL' && zone.team !== p.team) return res.status(403).json({ error: 'Ten checkpoint należy do innej drużyny.' });
+    const checkpoints = game.zones.filter(item => item.type === 'CHECKPOINT' && (item.team === 'ALL' || item.team === p.team)).sort((a,b) => (a.sequence || 999) - (b.sequence || 999));
+    const next = checkpoints.find(item => item.completedByTeam !== p.team);
+    if (next?.id !== zone.id) return res.status(409).json({ error: `Najpierw osiągnij checkpoint ${next?.sequence || 1}.` });
+    zone.completedByTeam = p.team; zone.completedAt = Date.now(); game.scores[p.team] = (game.scores[p.team] || 0) + 1;
+    event(game.id, 'CHECKPOINT_REACHED', { callsign: p.callsign, team: p.team, zone: zone.name, sequence: zone.sequence }, p.id); broadcastState(game.id);
+    return res.json({ action: 'CHECKPOINT_COMPLETED', zone, completed: checkpoints.filter(item => item.completedByTeam === p.team).length, total: checkpoints.length });
+  }
+  const objective = game.objectives?.find(item => item.id === zone.objectiveId || item.zoneId === zone.id);
+  if (objective && (objective.team === 'ALL' || objective.team === p.team)) {
+    objective.status = 'COMPLETED'; objective.progress = 100; game.scores[p.team] = (game.scores[p.team] || 0) + objective.points;
+    event(game.id, 'OBJECTIVE_COMPLETED', { callsign: p.callsign, team: p.team, objective: objective.name }, p.id); broadcastState(game.id);
+    return res.json({ action: 'OBJECTIVE_COMPLETED', zone, objective, scores: game.scores });
+  }
+  return res.json({ action: 'ZONE_CONFIRMED', zone });
+});
 app.post('/api/games/:id/score', auth, requireRole('ADMIN','STAFF'), (req, res) => {
   const parsed = z.object({ team: z.enum(['SERE','OPFOR']), delta: z.number().int().min(-1000).max(1000) }).safeParse(req.body), game = store.games.get(req.params.id);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowa punktacja.' });
@@ -437,12 +575,13 @@ app.post('/api/games/:id/score', auth, requireRole('ADMIN','STAFF'), (req, res) 
   game.scores[parsed.data.team] = Math.max(0, (game.scores[parsed.data.team] || 0) + parsed.data.delta); event(game.id, 'SCORE_CHANGED', { ...parsed.data, score: game.scores[parsed.data.team] }); broadcastState(game.id); res.json(game.scores);
 });
 app.patch('/api/participants/:id', auth, requireRole('ADMIN','STAFF'), (req, res) => {
-  if (req.auth.role === 'STAFF' && !can(req.auth, 'MANAGE_PARTICIPANTS')) return res.status(403).json({ error: 'Brak uprawnienia do zarządzania uczestnikami.' });
   const parsed = participantUpdateSchema.safeParse(req.body);
   const participant = store.participants.get(req.params.id);
   const game = participant && store.games.get(participant.gameId);
   if (!parsed.success || !participant || !game) return res.status(400).json({ error: 'Nieprawidłowa zmiana uczestnika.' });
   if (req.auth.role === 'STAFF' && req.auth.gameId !== participant.gameId) return res.status(403).json({ error: 'Uczestnik należy do innej sesji.' });
+  if (req.auth.role === 'STAFF' && ['team','role'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_TEAMS')) return res.status(403).json({ error: 'Brak uprawnienia do zespołów i ról.' });
+  if (req.auth.role === 'STAFF' && ['status','hitCount','respawnRequired'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_PARTICIPANTS')) return res.status(403).json({ error: 'Brak uprawnienia do stanu uczestników.' });
   if (parsed.data.team && (game.state !== 'LOBBY' || !feature(game, 'allowTeamChanges'))) return res.status(409).json({ error: 'Zmiana drużyny jest wyłączona lub gra już się rozpoczęła.' });
   Object.assign(participant, parsed.data);
   event(game.id, 'PARTICIPANT_CHANGED', { callsign: participant.callsign, ...parsed.data }, participant.id);
@@ -455,8 +594,17 @@ app.post('/api/locations', auth, requireRole('PARTICIPANT'), (req, res) => {
   const p = store.participants.get(req.auth.participantId); const game = store.games.get(p?.gameId);
   if (!p || !game || game.state === 'FINISHED') return res.status(409).json({ error: 'Śledzenie zostało zakończone dla tej sesji.' });
   if (!feature(game, 'gpsTracking') || (game.state !== 'ACTIVE' && !feature(game, 'shareLocationInLobby'))) return res.status(409).json({ error: 'Udostępnianie lokalizacji jest wyłączone dla tej sesji.' });
+  const previousLocation = p.location;
   const loc = { ...parsed.data, timestamp: parsed.data.timestamp || new Date().toISOString() };
   p.location = loc; p.lastSeenAt = new Date().toISOString(); p.battery = loc.battery ?? p.battery;
+  if (feature(game, 'routeReplay')) {
+    const lastPoint = store.tracks.at(-1), pointTime = Date.parse(loc.timestamp) || Date.now();
+    const shouldRecord = !lastPoint || lastPoint.participantId !== p.id || pointTime - lastPoint.timestamp >= 5_000 || !previousLocation || distanceMeters(previousLocation.latitude, previousLocation.longitude, loc.latitude, loc.longitude) >= 3;
+    if (shouldRecord) {
+      store.tracks.push({ id: crypto.randomUUID(), gameId: game.id, participantId: p.id, callsign: p.callsign, team: p.team, role: p.role || 'OPERATOR', latitude: loc.latitude, longitude: loc.longitude, accuracy: loc.accuracy ?? null, heading: loc.heading ?? null, timestamp: pointTime });
+      if (store.tracks.length > 100_000) store.tracks.splice(0, store.tracks.length - 100_000);
+    }
+  }
   const outside = feature(game, 'geofence') && game.state === 'ACTIVE' && !pointInPolygon(loc.latitude, loc.longitude, game.boundary);
   if (outside !== Boolean(p.outside)) {
     p.outside = outside; p.status = outside ? 'OUTSIDE' : game.state === 'ACTIVE' ? 'ACTIVE' : 'READY';
@@ -479,10 +627,11 @@ app.post('/api/timers', auth, requireRole('PARTICIPANT'), (req, res) => {
   if (!p || !game || !feature(game, 'timers') || game.state !== 'ACTIVE' || p.activeTimer) return res.status(409).json({ error: 'Timer nie może być teraz uruchomiony.' });
   if (p.respawnRequired && feature(game, 'respawnZones') && !inRespawnZone(game, p)) return res.status(409).json({ error: 'Wejdź do strefy respawnu swojej drużyny.' });
   const seconds = p.respawnRequired ? (game.modeSettings?.respawnSeconds || 60) : p.team === 'SERE' ? game.sereTimerSeconds : game.opforTimerSeconds;
-  const timer = { id: crypto.randomUUID(), gameId: game.id, participantId: p.id, seconds, startedAt: Date.now(), endsAt: Date.now() + seconds * 1000 };
+  const kind = p.respawnRequired ? 'RESPAWN' : p.team === 'SERE' ? 'SERE' : 'OPFOR';
+  const timer = { id: crypto.randomUUID(), gameId: game.id, participantId: p.id, kind, seconds, startedAt: Date.now(), endsAt: Date.now() + seconds * 1000 };
   store.timers.set(timer.id, timer); p.activeTimer = timer.id; p.timerCount += 1; p.status = p.respawnRequired ? 'RESPAWN' : p.team === 'SERE' ? 'TIMER' : 'RESPAWN';
   event(game.id, 'TIMER_STARTED', { callsign: p.callsign, seconds }, p.id); broadcastState(game.id);
-  setTimeout(() => { const current = store.timers.get(timer.id); if (!current || current.completedAt) return; current.completedAt = Date.now(); p.activeTimer = null; p.status = 'ACTIVE'; if (p.respawnRequired) { p.respawnRequired = false; p.hitCount = 0; p.respawnCount = (p.respawnCount || 0) + 1; } event(game.id, 'TIMER_FINISHED', { callsign: p.callsign }, p.id); broadcastState(game.id); }, seconds * 1000);
+  scheduleTimer(timer);
   res.status(201).json(timer);
 });
 app.post('/api/sos', auth, requireRole('PARTICIPANT'), (req, res) => {
@@ -509,21 +658,28 @@ app.post('/api/messages', auth, requireRole('ADMIN','STAFF','PARTICIPANT'), (req
   const viewer = effectiveViewer(req.auth), gameId = viewer.gameId || parsed.data?.gameId, game = store.games.get(gameId);
   if (!parsed.success || !game) return res.status(400).json({ error: 'Nieprawidłowy komunikat.' });
   if (viewer.role === 'PARTICIPANT' && (!feature(game, 'playerMessaging') || parsed.data.audience !== 'STAFF' || !parsed.data.recipientStaffId)) return res.status(403).json({ error: 'Gracz może pisać wyłącznie do dostępnego dowódcy.' });
+  if (viewer.role === 'PARTICIPANT') {
+    const recipient = store.staff.get(parsed.data.recipientStaffId);
+    if (!recipient || recipient.gameId !== gameId || !recipient.active || !recipient.permissions.includes('RECEIVE_PLAYER_MESSAGES')) return res.status(404).json({ error: 'Ten odbiorca nie jest już dostępny.' });
+  }
   if (viewer.role === 'STAFF') {
     const allowed = parsed.data.audience === 'ALL' ? can(viewer, 'SEND_ALL_MESSAGES') : ['SERE','OPFOR'].includes(parsed.data.audience) ? can(viewer, 'SEND_TEAM_MESSAGES') : can(viewer, 'SEND_DIRECT_MESSAGES');
     if (!allowed) return res.status(403).json({ error: 'Konto nie ma uprawnienia do tego rodzaju wiadomości.' });
+    if (parsed.data.audience === 'PARTICIPANT' && !store.participants.has(parsed.data.recipientParticipantId)) return res.status(404).json({ error: 'Nie znaleziono odbiorcy.' });
   }
   const message = { id: crypto.randomUUID(), gameId, ...parsed.data, senderRole: viewer.role, senderName: viewer.callsign || 'GRACZ', senderStaffId: viewer.staffId || null, senderParticipantId: viewer.participantId || null, time: Date.now(), createdAt: new Date().toISOString() };
   store.messages.push(message); event(gameId, 'MESSAGE_SENT', { audience: message.audience, sender: message.senderName });
-  io.to(`game:${gameId}`).emit('message:new', message); broadcastState(gameId); res.status(201).json(message);
+  broadcastMessage(gameId, message); broadcastState(gameId); res.status(201).json(message);
 });
-app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requireRole('ADMIN'), (req, res) => {
+app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requireRole('ADMIN','STAFF'), (req, res) => {
   const game = store.games.get(req.params.id);
   if (!game) return res.status(404).json({ error: 'Nie znaleziono gry.' });
+  if (req.auth.role === 'STAFF' && (req.auth.gameId !== game.id || !can(req.auth, 'MANAGE_GAME_STATE') || req.params.action === 'reset')) return res.status(403).json({ error: 'Brak uprawnienia do zmiany stanu gry.' });
   if (req.params.action === 'reset') {
     for (const [id, participant] of store.participants) if (participant.gameId === game.id) store.participants.delete(id);
-    for (const [id, timer] of store.timers) if (timer.gameId === game.id) store.timers.delete(id);
+    for (const [id, timer] of store.timers) if (timer.gameId === game.id) { clearTimeout(timerTimeouts.get(id)); timerTimeouts.delete(id); store.timers.delete(id); }
     for (const [id, alert] of store.sos) if (alert.gameId === game.id) store.sos.delete(id);
+    for (const zone of game.zones || []) { clearTimeout(zoneTimeouts.get(zone.id)); zoneTimeouts.delete(zone.id); Object.assign(zone, { ownerTeam:null, carrierParticipantId:null, capturingTeam:null, captureStartedAt:null, captureEndsAt:null, completedByTeam:null, completedAt:null }); }
     store.events = store.events.filter(item => item.gameId !== game.id);
     store.messages = store.messages.filter(item => item.gameId !== game.id);
     Object.assign(game, { state: 'LOBBY', startedAt: null, pausedAt: null, finishedAt: null, scores: { SERE: 0, OPFOR: 0 } });
@@ -546,6 +702,11 @@ function broadcastState(gameId) {
   persistSoon();
   for (const socket of io.sockets.sockets.values()) {
     if (socket.data.gameId === gameId) socket.emit('state:snapshot', snapshot(gameId, socket.auth));
+  }
+}
+function broadcastMessage(gameId, message) {
+  for (const socket of io.sockets.sockets.values()) {
+    if (socket.data.gameId === gameId && messageVisibleTo(message, socket.auth)) socket.emit('message:new', message);
   }
 }
 

@@ -199,3 +199,45 @@ test('tryby, strefy respawnu, trafienia i uprawnienia personelu działają razem
   assert.equal(deletedStaff.status, 204);
   assert.equal((await call(`/api/staff?gameId=${gameId}`, { headers: adminHeaders })).body.length, 0);
 });
+
+test('prywatne wiadomości, statusy, trasy i strefy trybu są izolowane i trwałe', async t => {
+  const featurePort = 18084, featureBase = `http://127.0.0.1:${featurePort}`;
+  const processChild = spawn(process.execPath, ['server/index.js'], {
+    cwd: process.cwd(),
+    env: { ...process.env, PORT: String(featurePort), NODE_ENV: 'development', ADMIN_PASSWORD: '2468', JWT_SECRET: 'feature-test-secret-at-least-32-characters' },
+    stdio: 'ignore'
+  });
+  t.after(() => processChild.kill());
+  await waitForServer(featureBase);
+  const call = async (route, options = {}) => {
+    const response = await fetch(`${featureBase}${route}`, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    const body = response.status === 204 ? null : await response.json();
+    return { response, body };
+  };
+  const admin = await call('/api/auth/admin', { method: 'POST', body: JSON.stringify({ callsign: 'GAME-MASTER', password: '2468' }) });
+  const gameId = admin.body.gameId, adminHeaders = { Authorization: `Bearer ${admin.body.token}` };
+  const createStaff = (username, callsign, permissions) => call('/api/staff', { method: 'POST', headers: adminHeaders, body: JSON.stringify({ gameId, username, callsign, password: 'Bezpieczne123', title: 'Operator', team: 'ALL', permissions }) });
+  const alpha = await createStaff('alpha', 'ALPHA', ['VIEW_ALL_PLAYERS','RECEIVE_PLAYER_MESSAGES','VIEW_COORDINATES','VIEW_PLAYER_STATUS','VIEW_REPLAY']);
+  const bravo = await createStaff('bravo', 'BRAVO', ['VIEW_ALL_PLAYERS','RECEIVE_PLAYER_MESSAGES']);
+  const login = async username => (await call('/api/auth/staff', { method: 'POST', body: JSON.stringify({ code: 'WILK24', username, password: 'Bezpieczne123' }) })).body.token;
+  const alphaToken = await login('alpha'), bravoToken = await login('bravo');
+  const alphaHeaders = { Authorization: `Bearer ${alphaToken}` }, bravoHeaders = { Authorization: `Bearer ${bravoToken}` };
+  const sere = await call('/api/games/WILK24/join', { method: 'POST', body: JSON.stringify({ callsign: 'TRACKER', team: 'SERE', consent: true, consentVersion: 'test' }) });
+  const playerHeaders = { Authorization: `Bearer ${sere.body.token}` };
+  await call('/api/messages', { method: 'POST', headers: playerHeaders, body: JSON.stringify({ audience: 'STAFF', recipientStaffId: alpha.body.id, body: 'Tylko dla Alpha' }) });
+  assert.equal((await call('/api/state', { headers: alphaHeaders })).body.messages[0].body, 'Tylko dla Alpha');
+  assert.equal((await call('/api/state', { headers: bravoHeaders })).body.messages.length, 0);
+  const hidden = (await call('/api/state', { headers: bravoHeaders })).body.participants[0];
+  assert.equal(hidden.status, 'HIDDEN');
+
+  const flag = { id: crypto.randomUUID(), name: 'Flaga OPFOR', type: 'FLAG', team: 'OPFOR', shape: 'CIRCLE', center: [52.2304,21.0184], radius: 100, color: '#ff9838' };
+  await call(`/api/games/${gameId}/zones`, { method: 'PATCH', headers: adminHeaders, body: JSON.stringify({ zones: [flag] }) });
+  await call(`/api/games/${gameId}/start`, { method: 'POST', headers: adminHeaders, body: '{}' });
+  await call('/api/locations', { method: 'POST', headers: playerHeaders, body: JSON.stringify({ latitude: 52.2304, longitude: 21.0184, accuracy: 4, heading: 45, headingSource: 'COMPASS', timestamp: new Date().toISOString() }) });
+  const taken = await call(`/api/zones/${flag.id}/interact`, { method: 'POST', headers: playerHeaders, body: '{}' });
+  assert.equal(taken.body.action, 'FLAG_TAKEN');
+  const replay = await call(`/api/games/${gameId}/replay`, { headers: adminHeaders });
+  assert.equal(replay.response.status, 200);
+  assert.equal(replay.body.tracks.length, 1);
+  assert.equal(replay.body.participants[0].callsign, 'TRACKER');
+});
