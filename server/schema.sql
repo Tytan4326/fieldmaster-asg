@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS participants (
   team team NOT NULL,
   role text NOT NULL DEFAULT 'OPERATOR',
   status participant_status NOT NULL DEFAULT 'READY',
+  map_access boolean NOT NULL DEFAULT true,
   consent_version text NOT NULL,
   consented_at timestamptz NOT NULL,
   battery smallint CHECK (battery BETWEEN 0 AND 100),

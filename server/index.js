@@ -90,6 +90,7 @@ const store = {
 };
 const timerTimeouts = new Map();
 const zoneTimeouts = new Map();
+const bombTimeouts = new Map();
 let persistenceTimer;
 function persistSoon() {
   if (!DATA_FILE) return;
@@ -183,7 +184,11 @@ const zoneSchema = z.object({
   sequence: z.number().int().min(1).max(100).optional(), objectiveId: z.string().uuid().nullable().optional(),
   ownerTeam: z.enum(['SERE','OPFOR']).nullable().optional(), carrierParticipantId: z.string().uuid().nullable().optional(),
   capturingTeam: z.enum(['SERE','OPFOR']).nullable().optional(), captureStartedAt: z.number().nullable().optional(), captureEndsAt: z.number().nullable().optional(),
-  completedByTeam: z.enum(['SERE','OPFOR']).nullable().optional(), completedAt: z.number().nullable().optional()
+  completedByTeam: z.enum(['SERE','OPFOR']).nullable().optional(), completedAt: z.number().nullable().optional(),
+  bombState: z.enum(['IDLE','PLANTING','PLANTED','DEFUSING','DEFUSED','DETONATED']).optional(),
+  bombAttackerTeam: z.enum(['SERE','OPFOR']).nullable().optional(), plantedByParticipantId: z.string().uuid().nullable().optional(),
+  defusedByParticipantId: z.string().uuid().nullable().optional(), plantStartedAt: z.number().nullable().optional(), plantEndsAt: z.number().nullable().optional(),
+  bombPlantedAt: z.number().nullable().optional(), bombEndsAt: z.number().nullable().optional(), defuseStartedAt: z.number().nullable().optional(), defuseEndsAt: z.number().nullable().optional()
 }).superRefine((zone, context) => {
   if (zone.shape === 'POLYGON' && (!zone.points || zone.points.length < 3)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['points'], message: 'Strefa wielokątna wymaga co najmniej 3 punktów.' });
 });
@@ -212,7 +217,8 @@ const createGameSchema = z.object({
 });
 const participantUpdateSchema = z.object({
   status: z.enum(['WAITING','READY','ACTIVE','TIMER','RESPAWN_WAIT','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED']).optional(),
-  team: z.enum(['SERE','OPFOR']).optional(), role: z.enum(['OPERATOR','COMMANDER','MEDIC','ENGINEER','VIP','CONVOY','SCOUT','REFEREE']).optional(), hitCount: z.number().int().min(0).max(100).optional(), respawnRequired: z.boolean().optional()
+  team: z.enum(['SERE','OPFOR']).optional(), role: z.enum(['OPERATOR','COMMANDER','MEDIC','ENGINEER','VIP','CONVOY','SCOUT','REFEREE']).optional(),
+  hitCount: z.number().int().min(0).max(100).optional(), respawnRequired: z.boolean().optional(), mapAccess: z.boolean().optional()
 }).refine(value => Object.keys(value).length > 0);
 const permissionSchema = z.array(z.enum(STAFF_PERMISSIONS)).max(STAFF_PERMISSIONS.length);
 const createStaffSchema = z.object({
@@ -454,7 +460,7 @@ app.post('/api/games/:code/join', (req, res) => {
     id: crypto.randomUUID(), gameId: game.id, callsign: parsed.data.callsign, normalizedCallsign: normalized,
     team: parsed.data.team, role: 'OPERATOR', status: 'READY', consentVersion: parsed.data.consentVersion,
     consentedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), location: null,
-    timerCount: 0, boundaryCount: 0, hitCount: 0, respawnCount: 0, respawnRequired: false, activeSos: false
+    timerCount: 0, boundaryCount: 0, hitCount: 0, respawnCount: 0, respawnRequired: false, activeSos: false, mapAccess: true
   };
   store.participants.set(participant.id, participant);
   event(game.id, 'PARTICIPANT_JOINED', { callsign: participant.callsign, team: participant.team }, participant.id);
@@ -476,6 +482,16 @@ app.get('/api/games/:id/replay', auth, requireRole('ADMIN','STAFF'), (req, res) 
   for (const point of store.tracks) if (point.gameId === game.id && !participantIndex.has(point.participantId)) participantIndex.set(point.participantId, { id: point.participantId, callsign: point.callsign || 'GRACZ', team: point.team || 'SERE', role: point.role || 'OPERATOR' });
   const participants = [...participantIndex.values()];
   res.json({ game: { id: game.id, code: game.code, name: game.name, startedAt: game.startedAt, finishedAt: game.finishedAt }, participants, tracks: store.tracks.filter(point => point.gameId === game.id) });
+});
+app.delete('/api/games/:id/replay', auth, requireRole('ADMIN'), (req, res) => {
+  const game = store.games.get(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Nie znaleziono sesji.' });
+  const before = store.tracks.length;
+  store.tracks = store.tracks.filter(point => point.gameId !== game.id);
+  const deleted = before - store.tracks.length;
+  event(game.id, 'REPLAY_CLEARED', { deleted });
+  broadcastState(game.id); persistSoon();
+  res.json({ deleted });
 });
 app.patch('/api/games/:id/settings', auth, requireRole('ADMIN','STAFF'), (req, res) => {
   const parsed = settingsSchema.safeParse(req.body);
@@ -509,7 +525,14 @@ app.patch('/api/games/:id/zones', auth, requireRole('ADMIN','STAFF'), (req, res)
   if (req.auth.role === 'STAFF' && (!can(req.auth, 'MANAGE_ZONES') || req.auth.gameId !== game.id)) return res.status(403).json({ error: 'Brak uprawnienia do stref.' });
   if (req.auth.role === 'STAFF' && parsed.data.zones.some(zone => zone.type === 'FLAG') && !can(req.auth, 'MANAGE_FLAGS')) return res.status(403).json({ error: 'Brak uprawnienia do flag.' });
   if (req.auth.role === 'STAFF' && parsed.data.zones.some(zone => zone.type === 'CHECKPOINT') && !can(req.auth, 'MANAGE_CHECKPOINTS')) return res.status(403).json({ error: 'Brak uprawnienia do checkpointów.' });
-  game.zones = parsed.data.zones; event(game.id, 'ZONES_CHANGED', { count: game.zones.length }); broadcastState(game.id); res.json(game);
+  const existingZones = new Map((game.zones || []).map(zone => [zone.id, zone]));
+  const nextIds = new Set(parsed.data.zones.map(zone => zone.id));
+  for (const oldZone of game.zones || []) if (!nextIds.has(oldZone.id)) {
+    clearTimeout(zoneTimeouts.get(oldZone.id)); zoneTimeouts.delete(oldZone.id);
+    for (const suffix of ['plant','explode','defuse']) { clearTimeout(bombTimeouts.get(`${oldZone.id}:${suffix}`)); bombTimeouts.delete(`${oldZone.id}:${suffix}`); }
+  }
+  game.zones = parsed.data.zones.map(zone => existingZones.has(zone.id) ? Object.assign(existingZones.get(zone.id), zone) : zone);
+  event(game.id, 'ZONES_CHANGED', { count: game.zones.length }); broadcastState(game.id); res.json(game);
 });
 app.patch('/api/games/:id/objectives', auth, requireRole('ADMIN','STAFF'), (req, res) => {
   const parsed = z.object({ objectives: z.array(objectiveSchema).max(100) }).safeParse(req.body), game = store.games.get(req.params.id);
@@ -523,6 +546,63 @@ app.post('/api/zones/:id/interact', auth, requireRole('PARTICIPANT'), (req, res)
   if (game.state !== 'ACTIVE') return res.status(409).json({ error: 'Interakcje stref działają podczas aktywnej gry.' });
   if (!participantInsideZone(p, zone)) return res.status(409).json({ error: 'Podejdź do strefy, aby wykonać tę akcję.' });
   if (zone.type === 'RESPAWN') return res.json({ action: 'RESPAWN_READY', zone, message: p.respawnRequired ? 'Możesz uruchomić timer respawnu.' : 'Jesteś w strefie respawnu.' });
+  if (zone.type === 'BOMB_SITE') {
+    const attackerTeam = zone.bombAttackerTeam || (zone.team === 'ALL' ? 'SERE' : zone.team);
+    const defenderTeam = attackerTeam === 'SERE' ? 'OPFOR' : 'SERE';
+    const state = zone.bombState || 'IDLE';
+    if (p.team === attackerTeam) {
+      if (state !== 'IDLE') return res.status(409).json({ error: state === 'PLANTED' || state === 'DEFUSING' ? 'Ładunek jest już podłożony.' : state === 'PLANTING' ? 'Podkładanie ładunku już trwa.' : 'Ta strefa została już rozstrzygnięta.' });
+      const seconds = Math.max(1, Number(game.modeSettings?.modeRules?.plantSeconds || 15));
+      Object.assign(zone, { bombState:'PLANTING', bombAttackerTeam:attackerTeam, plantedByParticipantId:p.id, plantStartedAt:Date.now(), plantEndsAt:Date.now() + seconds * 1000, bombPlantedAt:null, bombEndsAt:null, defuseStartedAt:null, defuseEndsAt:null, defusedByParticipantId:null });
+      clearTimeout(bombTimeouts.get(`${zone.id}:plant`));
+      bombTimeouts.set(`${zone.id}:plant`, setTimeout(() => {
+        const planter = store.participants.get(p.id);
+        if (zone.bombState !== 'PLANTING' || zone.plantedByParticipantId !== p.id) return;
+        if (!participantInsideZone(planter, zone)) {
+          Object.assign(zone, { bombState:'IDLE', plantedByParticipantId:null, plantStartedAt:null, plantEndsAt:null });
+          event(game.id, 'BOMB_PLANT_CANCELLED', { callsign:p.callsign, zone:zone.name }, p.id, 'WARNING');
+          broadcastState(game.id); return;
+        }
+        const bombSeconds = Math.max(5, Number(game.modeSettings?.modeRules?.bombTimerSeconds || 300));
+        Object.assign(zone, { bombState:'PLANTED', bombPlantedAt:Date.now(), bombEndsAt:Date.now() + bombSeconds * 1000, plantEndsAt:null });
+        event(game.id, 'BOMB_PLANTED', { callsign:p.callsign, team:p.team, zone:zone.name, seconds:bombSeconds }, p.id, 'CRITICAL');
+        broadcastState(game.id);
+        clearTimeout(bombTimeouts.get(`${zone.id}:explode`));
+        bombTimeouts.set(`${zone.id}:explode`, setTimeout(() => {
+          if (!['PLANTED','DEFUSING'].includes(zone.bombState)) return;
+          Object.assign(zone, { bombState:'DETONATED', bombEndsAt:null, defuseEndsAt:null });
+          game.scores[attackerTeam] = (game.scores[attackerTeam] || 0) + 1;
+          event(game.id, 'BOMB_DETONATED', { team:attackerTeam, zone:zone.name, score:game.scores[attackerTeam] }, p.id, 'CRITICAL');
+          broadcastState(game.id);
+        }, bombSeconds * 1000));
+      }, seconds * 1000));
+      event(game.id, 'BOMB_PLANT_STARTED', { callsign:p.callsign, team:p.team, zone:zone.name, seconds }, p.id, 'WARNING');
+      broadcastState(game.id); return res.json({ action:'BOMB_PLANT_STARTED', zone, seconds });
+    }
+    if (p.team === defenderTeam) {
+      if (state !== 'PLANTED') return res.status(409).json({ error: state === 'DEFUSING' ? 'Rozbrajanie ładunku już trwa.' : state === 'PLANTING' ? 'Ładunek nie został jeszcze podłożony.' : 'W tej strefie nie ma aktywnego ładunku.' });
+      const seconds = Math.max(1, Number(game.modeSettings?.modeRules?.defuseSeconds || 20));
+      Object.assign(zone, { bombState:'DEFUSING', defusedByParticipantId:p.id, defuseStartedAt:Date.now(), defuseEndsAt:Date.now() + seconds * 1000 });
+      clearTimeout(bombTimeouts.get(`${zone.id}:defuse`));
+      bombTimeouts.set(`${zone.id}:defuse`, setTimeout(() => {
+        const defender = store.participants.get(p.id);
+        if (zone.bombState !== 'DEFUSING' || zone.defusedByParticipantId !== p.id) return;
+        if (!participantInsideZone(defender, zone)) {
+          Object.assign(zone, { bombState:'PLANTED', defusedByParticipantId:null, defuseStartedAt:null, defuseEndsAt:null });
+          event(game.id, 'BOMB_DEFUSE_CANCELLED', { callsign:p.callsign, zone:zone.name }, p.id, 'WARNING');
+          broadcastState(game.id); return;
+        }
+        clearTimeout(bombTimeouts.get(`${zone.id}:explode`));
+        Object.assign(zone, { bombState:'DEFUSED', bombEndsAt:null, defuseStartedAt:null, defuseEndsAt:null });
+        game.scores[defenderTeam] = (game.scores[defenderTeam] || 0) + 1;
+        event(game.id, 'BOMB_DEFUSED', { callsign:p.callsign, team:p.team, zone:zone.name, score:game.scores[defenderTeam] }, p.id, 'WARNING');
+        broadcastState(game.id);
+      }, seconds * 1000));
+      event(game.id, 'BOMB_DEFUSE_STARTED', { callsign:p.callsign, team:p.team, zone:zone.name, seconds }, p.id, 'CRITICAL');
+      broadcastState(game.id); return res.json({ action:'BOMB_DEFUSE_STARTED', zone, seconds });
+    }
+    return res.status(403).json({ error: 'Twoja drużyna nie może wykonać tej akcji.' });
+  }
   if (zone.type === 'FLAG') {
     if (p.carriedFlagId && zone.team === p.team) {
       const captured = game.zones.find(item => item.id === p.carriedFlagId);
@@ -581,7 +661,7 @@ app.patch('/api/participants/:id', auth, requireRole('ADMIN','STAFF'), (req, res
   if (!parsed.success || !participant || !game) return res.status(400).json({ error: 'Nieprawidłowa zmiana uczestnika.' });
   if (req.auth.role === 'STAFF' && req.auth.gameId !== participant.gameId) return res.status(403).json({ error: 'Uczestnik należy do innej sesji.' });
   if (req.auth.role === 'STAFF' && ['team','role'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_TEAMS')) return res.status(403).json({ error: 'Brak uprawnienia do zespołów i ról.' });
-  if (req.auth.role === 'STAFF' && ['status','hitCount','respawnRequired'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_PARTICIPANTS')) return res.status(403).json({ error: 'Brak uprawnienia do stanu uczestników.' });
+  if (req.auth.role === 'STAFF' && ['status','hitCount','respawnRequired','mapAccess'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_PARTICIPANTS')) return res.status(403).json({ error: 'Brak uprawnienia do stanu uczestników.' });
   if (parsed.data.team && (game.state !== 'LOBBY' || !feature(game, 'allowTeamChanges'))) return res.status(409).json({ error: 'Zmiana drużyny jest wyłączona lub gra już się rozpoczęła.' });
   Object.assign(participant, parsed.data);
   event(game.id, 'PARTICIPANT_CHANGED', { callsign: participant.callsign, ...parsed.data }, participant.id);
@@ -679,7 +759,11 @@ app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requir
     for (const [id, participant] of store.participants) if (participant.gameId === game.id) store.participants.delete(id);
     for (const [id, timer] of store.timers) if (timer.gameId === game.id) { clearTimeout(timerTimeouts.get(id)); timerTimeouts.delete(id); store.timers.delete(id); }
     for (const [id, alert] of store.sos) if (alert.gameId === game.id) store.sos.delete(id);
-    for (const zone of game.zones || []) { clearTimeout(zoneTimeouts.get(zone.id)); zoneTimeouts.delete(zone.id); Object.assign(zone, { ownerTeam:null, carrierParticipantId:null, capturingTeam:null, captureStartedAt:null, captureEndsAt:null, completedByTeam:null, completedAt:null }); }
+    for (const zone of game.zones || []) {
+      clearTimeout(zoneTimeouts.get(zone.id)); zoneTimeouts.delete(zone.id);
+      for (const suffix of ['plant','explode','defuse']) { clearTimeout(bombTimeouts.get(`${zone.id}:${suffix}`)); bombTimeouts.delete(`${zone.id}:${suffix}`); }
+      Object.assign(zone, { ownerTeam:null, carrierParticipantId:null, capturingTeam:null, captureStartedAt:null, captureEndsAt:null, completedByTeam:null, completedAt:null, bombState:'IDLE', plantedByParticipantId:null, defusedByParticipantId:null, plantStartedAt:null, plantEndsAt:null, bombPlantedAt:null, bombEndsAt:null, defuseStartedAt:null, defuseEndsAt:null });
+    }
     store.events = store.events.filter(item => item.gameId !== game.id);
     store.messages = store.messages.filter(item => item.gameId !== game.id);
     Object.assign(game, { state: 'LOBBY', startedAt: null, pausedAt: null, finishedAt: null, scores: { SERE: 0, OPFOR: 0 } });
