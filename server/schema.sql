@@ -5,6 +5,7 @@ DO $$ BEGIN
   CREATE TYPE team AS ENUM ('SERE','OPFOR');
   CREATE TYPE participant_status AS ENUM ('WAITING','READY','ACTIVE','TIMER','RESPAWN_WAIT','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+ALTER TYPE team ADD VALUE IF NOT EXISTS 'NEUTRAL';
 
 CREATE TABLE IF NOT EXISTS games (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -38,7 +39,7 @@ CREATE TABLE IF NOT EXISTS operational_teams (
   game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
   code text NOT NULL,
   name text NOT NULL,
-  side team NOT NULL,
+  side team NOT NULL CHECK (side IN ('SERE','OPFOR')),
   color text NOT NULL,
   map_sharing text NOT NULL DEFAULT 'SQUAD' CHECK (map_sharing IN ('NONE','SQUAD','SIDE')),
   respawn_seconds integer CHECK (respawn_seconds BETWEEN 5 AND 1800),
@@ -47,6 +48,39 @@ CREATE TABLE IF NOT EXISTS operational_teams (
   allowed_roles jsonb NOT NULL DEFAULT '["OPERATOR"]',
   active boolean NOT NULL DEFAULT true,
   UNIQUE(game_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS staff_presets (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  description text NOT NULL DEFAULT '',
+  title text NOT NULL,
+  team text NOT NULL DEFAULT 'ALL' CHECK (team IN ('ALL','SERE','OPFOR')),
+  color text NOT NULL DEFAULT '#62a8ff',
+  permissions jsonb NOT NULL DEFAULT '[]',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS staff_accounts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  username text NOT NULL,
+  callsign text NOT NULL,
+  title text NOT NULL,
+  password_hash text NOT NULL,
+  team text NOT NULL DEFAULT 'ALL' CHECK (team IN ('ALL','SERE','OPFOR')),
+  squad_id uuid REFERENCES operational_teams(id) ON DELETE SET NULL,
+  preset_id uuid REFERENCES staff_presets(id) ON DELETE SET NULL,
+  permissions jsonb NOT NULL DEFAULT '[]',
+  notes text NOT NULL DEFAULT '',
+  active boolean NOT NULL DEFAULT true,
+  session_version integer NOT NULL DEFAULT 1,
+  expires_at timestamptz,
+  last_login_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz,
+  UNIQUE(game_id, username)
 );
 
 CREATE TABLE IF NOT EXISTS participants (
@@ -59,6 +93,9 @@ CREATE TABLE IF NOT EXISTS participants (
   role text NOT NULL DEFAULT 'OPERATOR',
   status participant_status NOT NULL DEFAULT 'READY',
   map_access boolean NOT NULL DEFAULT true,
+  health_state text NOT NULL DEFAULT 'HEALTHY' CHECK (health_state IN ('HEALTHY','WOUNDED','CRITICAL','ELIMINATED')),
+  disabled_capabilities jsonb NOT NULL DEFAULT '[]',
+  field_visible boolean NOT NULL DEFAULT false,
   consent_version text NOT NULL,
   consented_at timestamptz NOT NULL,
   battery smallint CHECK (battery BETWEEN 0 AND 100),

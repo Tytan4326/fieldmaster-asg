@@ -37,7 +37,7 @@ const DEFAULT_FEATURES = Object.freeze({
   routeReplay: true, modeIntel: true, zoneInteractions: true, stateAwareMarkers: true,
   messageNotifications: true, sosBroadcastAlarms: true,
   teamOperations: true, roleAbilities: true, commanderBroadcast: true,
-  autoSessionArchive: true
+  autoSessionArchive: true, selfRespawn: true, fieldRefereeControls: true
 });
 const FEATURE_KEYS = Object.keys(DEFAULT_FEATURES);
 const STAFF_PERMISSIONS = Object.freeze([
@@ -71,7 +71,8 @@ const DEFAULT_MODE = 'CLASSIC_SERE';
 const defaultModeSettings = mode => structuredClone(GAME_MODES[mode || DEFAULT_MODE].defaults);
 const ROLE_CAPABILITIES = Object.freeze([
   'TEAM_MAP','COMMAND','REVIVE','BOMB_SPECIALIST','RECON','EXTRACTION_TARGET',
-  'CHECKPOINT_OPERATOR','RESPAWN_MANAGER','OBJECTIVE_OPERATOR','SAFETY_OVERRIDE'
+  'CHECKPOINT_OPERATOR','RESPAWN_MANAGER','OBJECTIVE_OPERATOR','SAFETY_OVERRIDE',
+  'NEUTRAL_ROLE','INVULNERABLE','PAUSE_GAME','BROADCAST_SIGNAL','SELF_VISIBILITY'
 ]);
 const BUILTIN_ROLES = Object.freeze([
   { code:'OPERATOR', name:'Operator', icon:'OP', color:'#dce5e8', description:'Podstawowa rola liniowa bez specjalnych uprawnień.', capabilities:[], active:true },
@@ -81,9 +82,10 @@ const BUILTIN_ROLES = Object.freeze([
   { code:'VIP', name:'VIP', icon:'VIP', color:'#d69cff', description:'Kluczowy cel eskorty i ewakuacji.', capabilities:['EXTRACTION_TARGET'], active:true },
   { code:'CONVOY', name:'Operator konwoju', icon:'CV', color:'#62a8ff', description:'Obsługuje trasę i checkpointy konwoju.', capabilities:['CHECKPOINT_OPERATOR'], active:true },
   { code:'SCOUT', name:'Zwiadowca', icon:'ZW', color:'#5ee7d4', description:'Rola rozpoznawcza z widocznością własnego zespołu.', capabilities:['RECON'], active:true },
-  { code:'REFEREE', name:'Sędzia polowy', icon:'RF', color:'#ff5d5d', description:'Nadzoruje bezpieczeństwo i może zarządzać respawnem.', capabilities:['RESPAWN_MANAGER','SAFETY_OVERRIDE'], active:true }
+  { code:'REFEREE', name:'Sędzia polowy', icon:'RF', color:'#ff5d5d', description:'Neutralny i niezniszczalny nadzór terenowy: pauza, sygnały, respawn i kontrola widoczności GPS.', capabilities:['RESPAWN_MANAGER','SAFETY_OVERRIDE','NEUTRAL_ROLE','INVULNERABLE','PAUSE_GAME','BROADCAST_SIGNAL','SELF_VISIBILITY'], active:true }
 ]);
 const defaultRoles = () => structuredClone(BUILTIN_ROLES);
+function upgradedRoles(roles){return (roles?.length?roles:defaultRoles()).map(role=>role.code==='REFEREE'?{...role,description:BUILTIN_ROLES.find(item=>item.code==='REFEREE').description,capabilities:[...new Set([...(role.capabilities||[]),'NEUTRAL_ROLE','INVULNERABLE','PAUSE_GAME','BROADCAST_SIGNAL','SELF_VISIBILITY'])]}:{...role,capabilities:[...(role.capabilities||[])]});}
 const defaultTeams = () => [
   { id:crypto.randomUUID(), code:'SERE-ALFA', name:'SERE Alfa', side:'SERE', color:'#a3ff4f', mapSharing:'SQUAD', respawnSeconds:null, maxPlayers:100, radioChannel:'SERE-1', active:true, allowedRoles:BUILTIN_ROLES.map(role=>role.code) },
   { id:crypto.randomUUID(), code:'OPFOR-BRAWO', name:'OPFOR Brawo', side:'OPFOR', color:'#ff8a45', mapSharing:'SQUAD', respawnSeconds:null, maxPlayers:100, radioChannel:'OPFOR-1', active:true, allowedRoles:BUILTIN_ROLES.map(role=>role.code) }
@@ -96,6 +98,14 @@ const SESSION_PRESETS = Object.freeze({
   MEDICAL_MISSION:{ name:'Misja medyczna', icon:'MD', description:'Rozbudowany respawn, medycy i ewakuacja rannych.', mode:'MEDIC_RESCUE', durationMinutes:180, sereTimerSeconds:25, opforTimerSeconds:25, features:{ medicSystem:true, roleAbilities:true, respawnZones:true }, modeSettings:{ hitsToRespawn:2, respawnSeconds:120, modeRules:{ bleedoutSeconds:300, reviveSeconds:45, medicLives:3 } } },
   MILSIM_COMMAND:{ name:'MILSIM — pełne dowodzenie', icon:'C2', description:'Role, drużyny, MGRS, replay, archiwizacja i rozbudowana telemetria.', mode:'SEARCH_RESCUE', durationMinutes:360, sereTimerSeconds:30, opforTimerSeconds:45, features:{ teamOperations:true, roleAbilities:true, commanderBroadcast:true, mgrsGrid:true, routeReplay:true, autoSessionArchive:true, stateAwareMarkers:true, fovPrediction:true, compassSharing:true }, modeSettings:{ lives:2, respawnSeconds:120, fovRange:220, fovAngle:75 } }
 });
+
+const BUILTIN_STAFF_PRESETS = Object.freeze([
+  { id:'OBSERVER', name:'Obserwator', description:'Pełny podgląd sytuacji bez możliwości zmiany przebiegu gry.', title:'Obserwator', team:'ALL', color:'#62a8ff', builtin:true, permissions:['VIEW_ALL_PLAYERS','VIEW_FOV','VIEW_EVENTS','VIEW_SOS','VIEW_PLAYER_STATUS','VIEW_COORDINATES','VIEW_BATTERY','VIEW_ACCURACY','VIEW_TRACKS','VIEW_REPLAY','VIEW_MODE_INTEL','VIEW_REPORTS'] },
+  { id:'TEAM_COMMAND', name:'Dowódca strony', description:'Dowodzenie wybraną stroną, łączność i bieżący stan jej operatorów.', title:'Dowódca strony', team:'SERE', color:'#ffc247', builtin:true, permissions:['VIEW_TEAM_PLAYERS','VIEW_FOV','VIEW_EVENTS','VIEW_SOS','VIEW_PLAYER_STATUS','VIEW_COORDINATES','VIEW_ACCURACY','VIEW_MODE_INTEL','SEND_TEAM_MESSAGES','SEND_DIRECT_MESSAGES','RECEIVE_PLAYER_MESSAGES','MANAGE_PARTICIPANTS','ACK_SOS'] },
+  { id:'FIELD_MEDIC', name:'Koordynator medyczny', description:'Obsługa rannych, respawnów oraz alarmów bezpieczeństwa.', title:'Koordynator medyczny', team:'ALL', color:'#43e58d', builtin:true, permissions:['VIEW_ALL_PLAYERS','VIEW_EVENTS','VIEW_SOS','VIEW_PLAYER_STATUS','VIEW_COORDINATES','SEND_ALL_MESSAGES','SEND_DIRECT_MESSAGES','RECEIVE_PLAYER_MESSAGES','MANAGE_PARTICIPANTS','MANAGE_RESPAWNS','ACK_SOS','TRIGGER_NOTIFICATIONS'] },
+  { id:'REFEREE', name:'Sędzia główny', description:'Nadzór zasad, stref, punktacji, bezpieczeństwa i uczestników.', title:'Sędzia', team:'ALL', color:'#ff5d5d', builtin:true, permissions:['VIEW_ALL_PLAYERS','VIEW_FOV','VIEW_EVENTS','VIEW_SOS','VIEW_PLAYER_STATUS','VIEW_COORDINATES','VIEW_MODE_INTEL','SEND_ALL_MESSAGES','SEND_TEAM_MESSAGES','SEND_DIRECT_MESSAGES','MANAGE_PARTICIPANTS','MANAGE_TEAMS','MANAGE_ZONES','MANAGE_RESPAWNS','MANAGE_OBJECTIVES','MANAGE_FLAGS','MANAGE_CHECKPOINTS','MANAGE_MODE_RULES','MANAGE_GAME_STATE','ACK_SOS','TRIGGER_NOTIFICATIONS'] },
+  { id:'OPERATIONS', name:'Operator C2', description:'Pełny dostęp operacyjny z wyjątkiem administracji kontami.', title:'Operator C2', team:'ALL', color:'#d69cff', builtin:true, permissions:[...STAFF_PERMISSIONS] }
+]);
 
 const app = express();
 const server = http.createServer(app);
@@ -143,14 +153,14 @@ function restoreState() {
       const mode = GAME_MODES[item.mode] ? item.mode : DEFAULT_MODE;
       const restoredSettings = { ...defaultModeSettings(mode), ...(item.modeSettings || {}) };
       restoredSettings.modeRules = { ...defaultModeSettings(mode).modeRules, ...(item.modeSettings?.modeRules || {}) };
-      store.games.set(item.id, { ...item, mode, modeSettings: restoredSettings, zones: item.zones || [], objectives: item.objectives || [], teams: item.teams?.length ? item.teams : defaultTeams(), roles: item.roles?.length ? item.roles : defaultRoles(), scores: { SERE: 0, OPFOR: 0, ...(item.scores || {}) }, features: { ...DEFAULT_FEATURES, ...(item.features || {}) } });
+      store.games.set(item.id, { ...item, mode, modeSettings: restoredSettings, zones: item.zones || [], objectives: item.objectives || [], teams: item.teams?.length ? item.teams : defaultTeams(), roles: upgradedRoles(item.roles), staffPresets:item.staffPresets || [], scores: { SERE: 0, OPFOR: 0, ...(item.scores || {}) }, features: { ...DEFAULT_FEATURES, ...(item.features || {}) } });
     }
     for (const item of data.participants || []) {
       item.activeTimer = null;
       if (['TIMER','RESPAWN'].includes(item.status)) item.status = 'ACTIVE';
-      store.participants.set(item.id, item);
+      store.participants.set(item.id, { healthState:'HEALTHY', disabledCapabilities:[], fieldVisible:false, ...item });
     }
-    for (const item of data.staff || []) store.staff.set(item.id, item);
+    for (const item of data.staff || []) store.staff.set(item.id, { squadId:null, notes:'', expiresAt:null, presetId:null, sessionVersion:1, ...item });
     for (const item of data.timers || []) store.timers.set(item.id, { ...item, cancelledAt: item.cancelledAt || Date.now() });
     for (const item of data.sos || []) store.sos.set(item.id, item);
     store.events = data.events || []; store.messages = data.messages || []; store.tracks = data.tracks || []; store.archives = data.archives || [];
@@ -166,7 +176,7 @@ if (!restored || !demoGame) {
   demoGame = {
     id: crypto.randomUUID(), code: 'WILK24', name: 'Operacja Nocny Wilk', state: 'LOBBY',
     durationMinutes: 1440, sereTimerSeconds: 20, opforTimerSeconds: 60, boundary,
-    mode: DEFAULT_MODE, modeSettings: defaultModeSettings(DEFAULT_MODE), zones: [], objectives: [], teams: defaultTeams(), roles: defaultRoles(), scores: { SERE: 0, OPFOR: 0 }, features: { ...DEFAULT_FEATURES },
+    mode: DEFAULT_MODE, modeSettings: defaultModeSettings(DEFAULT_MODE), zones: [], objectives: [], teams: defaultTeams(), roles: defaultRoles(), staffPresets:[], scores: { SERE: 0, OPFOR: 0 }, features: { ...DEFAULT_FEATURES },
     startedAt: null, finishedAt: null, createdAt: new Date().toISOString()
   };
   store.games.set(demoGame.id, demoGame);
@@ -186,7 +196,8 @@ function makeGame({ code, name, source = demoGame }) {
     zones: (source?.zones || []).map(zone => ({ ...zone, center: [...zone.center], points: zone.points?.map(point => [...point]) })),
     objectives: (source?.objectives || []).map(objective => ({ ...objective })),
     teams: (source?.teams?.length ? source.teams : defaultTeams()).map(team => ({ ...team, id:crypto.randomUUID(), allowedRoles:[...(team.allowedRoles || [])] })),
-    roles: (source?.roles?.length ? source.roles : defaultRoles()).map(role => ({ ...role, capabilities:[...(role.capabilities || [])] })),
+    roles: upgradedRoles(source?.roles),
+    staffPresets: (source?.staffPresets || []).map(preset => ({ ...preset, id:crypto.randomUUID(), permissions:[...(preset.permissions || [])], builtin:false })),
     scores: { SERE: 0, OPFOR: 0 },
     features: { ...DEFAULT_FEATURES, ...(source?.features || {}) },
     startedAt: null, pausedAt: null, finishedAt: null, createdAt: new Date().toISOString()
@@ -249,8 +260,9 @@ const createGameSchema = z.object({
 });
 const participantUpdateSchema = z.object({
   status: z.enum(['WAITING','READY','ACTIVE','TIMER','RESPAWN_WAIT','RESPAWN','CAPTURED','OUTSIDE','SOS','DISCONNECTED','FINISHED','REMOVED']).optional(),
-  team: z.enum(['SERE','OPFOR']).optional(), role: z.string().trim().min(2).max(24).regex(/^[A-Z0-9_-]+$/).optional(), squadId: z.string().uuid().nullable().optional(),
-  hitCount: z.number().int().min(0).max(100).optional(), respawnRequired: z.boolean().optional(), mapAccess: z.boolean().optional()
+  team: z.enum(['SERE','OPFOR','NEUTRAL']).optional(), role: z.string().trim().min(2).max(24).regex(/^[A-Z0-9_-]+$/).optional(), squadId: z.string().uuid().nullable().optional(),
+  hitCount: z.number().int().min(0).max(100).optional(), respawnRequired: z.boolean().optional(), mapAccess: z.boolean().optional(),
+  healthState:z.enum(['HEALTHY','WOUNDED','CRITICAL','ELIMINATED']).optional(), disabledCapabilities:z.array(z.enum(ROLE_CAPABILITIES)).max(ROLE_CAPABILITIES.length).optional(), fieldVisible:z.boolean().optional()
 }).refine(value => Object.keys(value).length > 0);
 const teamSchema = z.object({
   id:z.string().uuid(), code:z.string().trim().min(2).max(16).regex(/^[A-Za-z0-9_-]+$/).transform(value=>value.toUpperCase()),
@@ -265,18 +277,26 @@ const roleSchema = z.object({
   description:z.string().trim().max(300), capabilities:z.array(z.enum(ROLE_CAPABILITIES)).max(ROLE_CAPABILITIES.length), active:z.boolean()
 });
 const permissionSchema = z.array(z.enum(STAFF_PERMISSIONS)).max(STAFF_PERMISSIONS.length);
+const optionalExpirySchema = z.string().datetime().nullable().optional();
 const createStaffSchema = z.object({
   gameId: z.string().uuid(), username: z.string().trim().min(3).max(32).regex(/^[A-Za-z0-9_.-]+$/).transform(value => value.toLowerCase()),
   callsign: z.string().trim().min(2).max(32), password: z.string().min(8).max(128), team: z.enum(['ALL','SERE','OPFOR']),
-  title: z.string().trim().min(2).max(50).default('Dowódca'), permissions: permissionSchema
+  squadId:z.string().uuid().nullable().optional(), title: z.string().trim().min(2).max(50).default('Dowódca'), permissions: permissionSchema,
+  notes:z.string().trim().max(500).optional(), expiresAt:optionalExpirySchema, presetId:z.string().trim().max(64).nullable().optional()
 });
-const updateStaffSchema = z.object({ callsign: z.string().trim().min(2).max(32).optional(), title: z.string().trim().min(2).max(50).optional(), team: z.enum(['ALL','SERE','OPFOR']).optional(), permissions: permissionSchema.optional(), active: z.boolean().optional(), password: z.string().min(8).max(128).optional() }).refine(value => Object.keys(value).length > 0);
+const updateStaffSchema = z.object({ callsign: z.string().trim().min(2).max(32).optional(), title: z.string().trim().min(2).max(50).optional(), team: z.enum(['ALL','SERE','OPFOR']).optional(), squadId:z.string().uuid().nullable().optional(), permissions: permissionSchema.optional(), active: z.boolean().optional(), password: z.string().min(8).max(128).optional(), notes:z.string().trim().max(500).optional(), expiresAt:optionalExpirySchema, presetId:z.string().trim().max(64).nullable().optional(), revokeSessions:z.boolean().optional() }).refine(value => Object.keys(value).length > 0);
+const staffPresetSchema=z.object({ name:z.string().trim().min(2).max(50), description:z.string().trim().max(300), title:z.string().trim().min(2).max(50), team:z.enum(['ALL','SERE','OPFOR']), color:z.string().regex(/^#[0-9a-f]{6}$/i).default('#62a8ff'), permissions:permissionSchema });
 
 function sign(payload, expiresIn = '12h') { return jwt.sign(payload, JWT_SECRET, { expiresIn }); }
+function staffAccountValid(account, tokenVersion = null) {
+  return Boolean(account?.active && (!account.expiresAt || Date.parse(account.expiresAt) > Date.now()) && (tokenVersion === null || Number(account.sessionVersion || 1) === Number(tokenVersion || 1)));
+}
 function auth(req, res, next) {
   try {
     const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-    req.auth = jwt.verify(token, JWT_SECRET); next();
+    req.auth = jwt.verify(token, JWT_SECRET);
+    if (req.auth.role === 'STAFF' && !staffAccountValid(store.staff.get(req.auth.staffId), req.auth.sessionVersion)) return res.status(401).json({ error:'Konto wygasło, zostało wyłączone albo jego sesje unieważniono.' });
+    next();
   } catch { res.status(401).json({ error: 'Brak ważnej sesji.' }); }
 }
 function requireRole(...roles) { return (req, res, next) => roles.includes(req.auth?.role) ? next() : res.status(403).json({ error: 'Brak uprawnienia.' }); }
@@ -287,7 +307,7 @@ function effectiveViewer(viewer) {
   }
   if (viewer?.role !== 'STAFF') return viewer;
   const account = store.staff.get(viewer.staffId);
-  return account?.active ? { ...viewer, gameId: account.gameId, team: account.team, permissions: account.permissions, callsign: account.callsign } : viewer;
+  return staffAccountValid(account, viewer.sessionVersion) ? { ...viewer, gameId: account.gameId, team: account.team, squadId:account.squadId || null, permissions: account.permissions, callsign: account.callsign } : viewer;
 }
 function can(viewer, permission) { return viewer?.role === 'ADMIN' || effectiveViewer(viewer)?.permissions?.includes(permission); }
 function requirePermission(permission) { return (req, res, next) => can(req.auth, permission) ? next() : res.status(403).json({ error: 'To konto nie ma wymaganego uprawnienia.' }); }
@@ -296,7 +316,7 @@ function event(gameId, type, details = {}, participantId = null, severity = 'INF
   store.events.unshift(item); io.to(`game:${gameId}:staff`).emit('event:new', item); persistSoon(); return item;
 }
 function participantRole(game, participant) { return game?.roles?.find(role => role.code === (participant?.role || 'OPERATOR')) || BUILTIN_ROLES.find(role => role.code === (participant?.role || 'OPERATOR')) || BUILTIN_ROLES[0]; }
-function participantCapabilities(game, participant) { return feature(game, 'roleAbilities') ? (participantRole(game, participant)?.capabilities || []) : []; }
+function participantCapabilities(game, participant) { const disabled=new Set(participant?.disabledCapabilities || []);return feature(game, 'roleAbilities') ? (participantRole(game, participant)?.capabilities || []).filter(capability=>!disabled.has(capability)) : []; }
 function participantTeam(game, participant) { return game?.teams?.find(team => team.id === participant?.squadId) || null; }
 function participantRespawnSeconds(game, participant) { return participantTeam(game, participant)?.respawnSeconds || game?.modeSettings?.respawnSeconds || 60; }
 function participantView(p) {
@@ -313,8 +333,11 @@ function visibleParticipants(gameId, viewer) {
   const currentViewer = viewer.participantId ? store.participants.get(viewer.participantId) : null;
   const effectiveTeam = currentViewer?.team || viewer.team;
   return [...store.participants.values()].filter(p => p.gameId === gameId).filter(p => {
-    if (viewer.role === 'ADMIN' || can(viewer, 'VIEW_ALL_PLAYERS')) return true;
-    if (viewer.role === 'STAFF' && can(viewer, 'VIEW_TEAM_PLAYERS')) return viewer.team === 'ALL' || p.team === viewer.team;
+    if (viewer.role === 'ADMIN') return true;
+    if (p.team === 'NEUTRAL' && p.id !== viewer.participantId && !p.fieldVisible) return false;
+    if (p.team === 'NEUTRAL' && p.fieldVisible) return true;
+    if (can(viewer, 'VIEW_ALL_PLAYERS')) return true;
+    if (viewer.role === 'STAFF' && can(viewer, 'VIEW_TEAM_PLAYERS')) return viewer.squadId ? p.squadId === viewer.squadId : viewer.team === 'ALL' || p.team === viewer.team;
     if (p.activeSos) return true;
     if (p.id === viewer.participantId) return true;
     if (viewer.role === 'PARTICIPANT' && currentViewer && p.team === currentViewer.team) {
@@ -390,7 +413,7 @@ function finishTimer(timer) {
   const current = store.timers.get(timer.id), p = current && store.participants.get(current.participantId);
   if (!current || current.completedAt || !p) return;
   current.completedAt = Date.now(); p.activeTimer = null; p.status = 'ACTIVE';
-  if (current.kind === 'RESPAWN' || p.respawnRequired) { p.respawnRequired = false; p.hitCount = 0; p.respawnCount = (p.respawnCount || 0) + 1; }
+  if (current.kind === 'RESPAWN' || p.respawnRequired) { p.respawnRequired = false; p.hitCount = 0; p.healthState='HEALTHY'; p.respawnCount = (p.respawnCount || 0) + 1; }
   event(current.gameId, 'TIMER_FINISHED', { callsign: p.callsign }, p.id); timerTimeouts.delete(current.id); broadcastState(current.gameId);
 }
 function scheduleTimer(timer) {
@@ -453,8 +476,9 @@ function snapshot(gameId, viewer) {
     sos: viewer.role === 'ADMIN' || can(viewer, 'VIEW_SOS') || viewer.role === 'PARTICIPANT' ? activeSos(gameId) : [],
     events: viewer.role === 'ADMIN' || can(viewer, 'VIEW_EVENTS') ? store.events.filter(e => e.gameId === gameId).slice(0, 200) : [],
     messages: visibleMessages(gameId, viewer),
-    contacts: [...store.staff.values()].filter(account => account.gameId === gameId && account.active && account.permissions.includes('RECEIVE_PLAYER_MESSAGES')).map(account => ({ id: account.id, callsign: account.callsign, title: account.title, team: account.team })),
+    contacts: [...store.staff.values()].filter(account => account.gameId === gameId && staffAccountValid(account) && account.permissions.includes('RECEIVE_PLAYER_MESSAGES')).map(account => ({ id: account.id, callsign: account.callsign, title: account.title, team: account.team })),
     staff: viewer.role === 'ADMIN' ? [...store.staff.values()].filter(account => account.gameId === gameId).map(staffView) : undefined,
+    staffPresets: viewer.role === 'ADMIN' ? [...BUILTIN_STAFF_PRESETS.map(item=>structuredClone(item)), ...(store.games.get(gameId)?.staffPresets || [])] : undefined,
     currentStaff: isStaff ? staffView(store.staff.get(viewer.staffId)) : undefined,
     archives: viewer.role === 'ADMIN' || can(viewer, 'VIEW_REPORTS') ? store.archives.filter(item=>item.gameId===gameId).map(archiveSummary) : undefined
   };
@@ -494,27 +518,49 @@ app.post('/api/auth/admin', async (req, res) => {
 app.post('/api/auth/staff', async (req, res) => {
   const parsed = z.object({ code: z.string().trim().min(4).max(16), username: z.string().trim().min(3).max(32), password: z.string().min(1).max(128) }).safeParse(req.body);
   const game = parsed.success ? gameByCode(parsed.data.code) : null;
-  const account = game && [...store.staff.values()].find(item => item.gameId === game.id && item.username === parsed.data.username.toLowerCase() && item.active);
+  const account = game && [...store.staff.values()].find(item => item.gameId === game.id && item.username === parsed.data.username.toLowerCase() && staffAccountValid(item));
   if (!account || !(await bcrypt.compare(parsed.data.password, account.passwordHash))) return res.status(401).json({ error: 'Nieprawidłowy kod sesji, login lub hasło.' });
   account.lastLoginAt = new Date().toISOString(); persistSoon();
-  res.json({ token: sign({ role: 'STAFF', staffId: account.id, gameId: game.id }), role: 'STAFF', gameId: game.id, staff: staffView(account) });
+  res.json({ token: sign({ role: 'STAFF', staffId: account.id, gameId: game.id, sessionVersion:account.sessionVersion || 1 }), role: 'STAFF', gameId: game.id, staff: staffView(account) });
 });
 app.get('/api/staff', auth, requireRole('ADMIN'), (req, res) => {
   const gameId = String(req.query.gameId || '');
   res.json([...store.staff.values()].filter(account => account.gameId === gameId).map(staffView));
 });
+app.get('/api/games/:id/staff-presets', auth, requireRole('ADMIN'), (req,res)=>{
+  const game=store.games.get(req.params.id);if(!game)return res.status(404).json({error:'Nie znaleziono sesji.'});
+  res.json([...BUILTIN_STAFF_PRESETS.map(item=>structuredClone(item)), ...(game.staffPresets || [])]);
+});
+app.post('/api/games/:id/staff-presets', auth, requireRole('ADMIN'), (req,res)=>{
+  const game=store.games.get(req.params.id),parsed=staffPresetSchema.safeParse(req.body);if(!game||!parsed.success)return res.status(400).json({error:'Nieprawidłowy preset konta.'});
+  const preset={id:crypto.randomUUID(),...parsed.data,builtin:false,createdAt:new Date().toISOString()};game.staffPresets ||= [];game.staffPresets.push(preset);event(game.id,'STAFF_PRESET_CREATED',{name:preset.name});broadcastState(game.id);res.status(201).json(preset);
+});
+app.patch('/api/games/:id/staff-presets/:presetId', auth, requireRole('ADMIN'), (req,res)=>{
+  const game=store.games.get(req.params.id),preset=game?.staffPresets?.find(item=>item.id===req.params.presetId),parsed=staffPresetSchema.partial().safeParse(req.body);if(!preset||!parsed.success||!Object.keys(parsed.data).length)return res.status(400).json({error:'Nieprawidłowa zmiana presetu.'});
+  Object.assign(preset,parsed.data,{updatedAt:new Date().toISOString()});event(game.id,'STAFF_PRESET_CHANGED',{name:preset.name});broadcastState(game.id);res.json(preset);
+});
+app.delete('/api/games/:id/staff-presets/:presetId', auth, requireRole('ADMIN'), (req,res)=>{
+  const game=store.games.get(req.params.id),index=game?.staffPresets?.findIndex(item=>item.id===req.params.presetId)??-1;if(!game||index<0)return res.status(404).json({error:'Nie znaleziono własnego presetu.'});
+  const [preset]=game.staffPresets.splice(index,1);for(const account of store.staff.values())if(account.gameId===game.id&&account.presetId===preset.id)account.presetId=null;event(game.id,'STAFF_PRESET_DELETED',{name:preset.name});broadcastState(game.id);res.status(204).end();
+});
 app.post('/api/staff', auth, requireRole('ADMIN'), async (req, res) => {
   const parsed = createStaffSchema.safeParse(req.body);
   if (!parsed.success || !store.games.has(parsed.data?.gameId)) return res.status(400).json({ error: 'Nieprawidłowe dane konta personelu.' });
   if ([...store.staff.values()].some(account => account.gameId === parsed.data.gameId && account.username === parsed.data.username)) return res.status(409).json({ error: 'Ten login jest już zajęty w tej sesji.' });
-  const account = { id: crypto.randomUUID(), ...parsed.data, passwordHash: await bcrypt.hash(parsed.data.password, 10), active: true, createdAt: new Date().toISOString() };
+  const game=store.games.get(parsed.data.gameId),squad=parsed.data.squadId&&game.teams?.find(team=>team.id===parsed.data.squadId);
+  if(parsed.data.squadId&&(!squad||parsed.data.team==='ALL'||squad.side!==parsed.data.team))return res.status(409).json({error:'Przydział personelu nie pasuje do wybranej strony.'});
+  const account = { id: crypto.randomUUID(), ...parsed.data, squadId:parsed.data.squadId||null, notes:parsed.data.notes||'', expiresAt:parsed.data.expiresAt||null, presetId:parsed.data.presetId||null, sessionVersion:1, passwordHash: await bcrypt.hash(parsed.data.password, 10), active: true, createdAt: new Date().toISOString() };
   delete account.password; store.staff.set(account.id, account); event(account.gameId, 'STAFF_CREATED', { callsign: account.callsign, title: account.title });
   persistSoon(); res.status(201).json(staffView(account));
 });
 app.patch('/api/staff/:id', auth, requireRole('ADMIN'), async (req, res) => {
   const parsed = updateStaffSchema.safeParse(req.body), account = store.staff.get(req.params.id);
   if (!parsed.success || !account) return res.status(400).json({ error: 'Nieprawidłowa zmiana konta.' });
-  const updates = { ...parsed.data }; if (updates.password) { updates.passwordHash = await bcrypt.hash(updates.password, 10); delete updates.password; }
+  const updates = { ...parsed.data }, game=store.games.get(account.gameId), nextTeam=updates.team||account.team, nextSquadId=updates.squadId!==undefined?updates.squadId:account.squadId, squad=nextSquadId&&game?.teams?.find(team=>team.id===nextSquadId);
+  if(nextSquadId&&(!squad||nextTeam==='ALL'||squad.side!==nextTeam))return res.status(409).json({error:'Przydział personelu nie pasuje do wybranej strony.'});
+  if(nextTeam==='ALL')updates.squadId=null;
+  if (updates.password) { updates.passwordHash = await bcrypt.hash(updates.password, 10); delete updates.password; updates.sessionVersion=(account.sessionVersion||1)+1; }
+  if(Object.hasOwn(updates,'revokeSessions')){if(updates.revokeSessions)updates.sessionVersion=(account.sessionVersion||1)+1;delete updates.revokeSessions;}
   Object.assign(account, updates, { updatedAt: new Date().toISOString() }); event(account.gameId, 'STAFF_CHANGED', { callsign: account.callsign });
   broadcastState(account.gameId); res.json(staffView(account));
 });
@@ -540,7 +586,7 @@ app.post('/api/games/:code/join', (req, res) => {
     id: crypto.randomUUID(), gameId: game.id, callsign: parsed.data.callsign, normalizedCallsign: normalized,
     team: parsed.data.team, squadId:squad?.id || null, role: 'OPERATOR', status: 'READY', consentVersion: parsed.data.consentVersion,
     consentedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), location: null,
-    timerCount: 0, boundaryCount: 0, hitCount: 0, respawnCount: 0, respawnRequired: false, activeSos: false, mapAccess: true
+    timerCount: 0, boundaryCount: 0, hitCount: 0, respawnCount: 0, respawnRequired: false, healthState:'HEALTHY', disabledCapabilities:[], fieldVisible:false, activeSos: false, mapAccess: true
   };
   store.participants.set(participant.id, participant);
   event(game.id, 'PARTICIPANT_JOINED', { callsign: participant.callsign, team: participant.team }, participant.id);
@@ -809,16 +855,19 @@ app.patch('/api/participants/:id', auth, requireRole('ADMIN','STAFF'), (req, res
   const game = participant && store.games.get(participant.gameId);
   if (!parsed.success || !participant || !game) return res.status(400).json({ error: 'Nieprawidłowa zmiana uczestnika.' });
   if (req.auth.role === 'STAFF' && req.auth.gameId !== participant.gameId) return res.status(403).json({ error: 'Uczestnik należy do innej sesji.' });
-  if (req.auth.role === 'STAFF' && ['team','role','squadId'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_TEAMS')) return res.status(403).json({ error: 'Brak uprawnienia do zespołów i ról.' });
-  if (req.auth.role === 'STAFF' && ['status','hitCount','respawnRequired','mapAccess'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_PARTICIPANTS')) return res.status(403).json({ error: 'Brak uprawnienia do stanu uczestników.' });
-  if (parsed.data.team && (game.state !== 'LOBBY' || !feature(game, 'allowTeamChanges'))) return res.status(409).json({ error: 'Zmiana drużyny jest wyłączona lub gra już się rozpoczęła.' });
+  if (req.auth.role === 'STAFF' && ['team','role','squadId','disabledCapabilities'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_TEAMS')) return res.status(403).json({ error: 'Brak uprawnienia do zespołów i ról.' });
+  if (req.auth.role === 'STAFF' && ['status','hitCount','respawnRequired','mapAccess','healthState','fieldVisible'].some(key => parsed.data[key] !== undefined) && !can(req.auth, 'MANAGE_PARTICIPANTS')) return res.status(403).json({ error: 'Brak uprawnienia do stanu uczestników.' });
+  const nextRole=parsed.data.role||participant.role||'OPERATOR', role=game.roles?.find(item=>item.code===nextRole && item.active);
+  if (!role) return res.status(409).json({ error:'Wybrana rola nie jest aktywna w tej sesji.' });
+  const neutralRole=(role.capabilities||[]).includes('NEUTRAL_ROLE');
+  if(neutralRole){parsed.data.team='NEUTRAL';parsed.data.squadId=null;}
+  else if((parsed.data.team||participant.team)==='NEUTRAL')parsed.data.team='SERE';
+  if (parsed.data.team && parsed.data.team!==participant.team && !neutralRole && participant.team!=='NEUTRAL' && (game.state !== 'LOBBY' || !feature(game, 'allowTeamChanges'))) return res.status(409).json({ error: 'Zmiana drużyny jest wyłączona lub gra już się rozpoczęła.' });
   const nextSide=parsed.data.team||participant.team;
   const nextSquadId=parsed.data.squadId!==undefined?parsed.data.squadId:participant.squadId;
   const squad=nextSquadId ? game.teams?.find(team=>team.id===nextSquadId) : null;
   if (nextSquadId && (!squad || !squad.active || squad.side!==nextSide) && parsed.data.squadId!==undefined) return res.status(409).json({ error:'Wybrana drużyna operacyjna nie pasuje do strony uczestnika.' });
   if (parsed.data.team && participant.squadId && !game.teams?.some(team=>team.id===participant.squadId && team.side===parsed.data.team)) parsed.data.squadId=null;
-  const nextRole=parsed.data.role||participant.role||'OPERATOR', role=game.roles?.find(item=>item.code===nextRole && item.active);
-  if (!role) return res.status(409).json({ error:'Wybrana rola nie jest aktywna w tej sesji.' });
   const effectiveSquad=parsed.data.squadId===null?null:squad?.side===nextSide?squad:null;
   if (effectiveSquad?.allowedRoles?.length && !effectiveSquad.allowedRoles.includes(nextRole)) return res.status(409).json({ error:'Ta rola nie jest dozwolona w wybranej drużynie.' });
   if (effectiveSquad && parsed.data.squadId!==undefined && participant.squadId!==effectiveSquad.id && [...store.participants.values()].filter(item=>item.gameId===game.id&&item.squadId===effectiveSquad.id&&item.status!=='REMOVED').length>=effectiveSquad.maxPlayers) return res.status(409).json({ error:'Wybrana drużyna osiągnęła limit uczestników.' });
@@ -854,30 +903,53 @@ app.post('/api/locations', auth, requireRole('PARTICIPANT'), (req, res) => {
 });
 app.post('/api/participants/:id/assist', auth, requireRole('PARTICIPANT'), (req, res) => {
   const source=store.participants.get(req.auth.participantId), target=store.participants.get(req.params.id), game=store.games.get(source?.gameId);
-  if (!source || !target || !game || source.gameId!==target.gameId || source.team!==target.team || source.id===target.id) return res.status(404).json({ error:'Nie znaleziono członka drużyny do pomocy.' });
+  if (!source || !target || !game || source.gameId!==target.gameId || source.id===target.id) return res.status(404).json({ error:'Nie znaleziono uczestnika do pomocy.' });
   const capabilities=participantCapabilities(game,source),medic=feature(game,'medicSystem')&&capabilities.includes('REVIVE'),manager=capabilities.includes('RESPAWN_MANAGER');
   if (!medic&&!manager) return res.status(403).json({ error:'Rola uczestnika nie pozwala na przywrócenie gracza.' });
-  if (game.state!=='ACTIVE' || !['CAPTURED','RESPAWN_WAIT','RESPAWN'].includes(target.status) && !target.respawnRequired) return res.status(409).json({ error:'Ten uczestnik nie wymaga obecnie pomocy.' });
+  if(medic&&source.team!==target.team)return res.status(403).json({error:'Medyk może leczyć tylko członków swojej strony.'});
+  const needsTreatment=['WOUNDED','CRITICAL','ELIMINATED'].includes(target.healthState)||['CAPTURED','RESPAWN_WAIT','RESPAWN'].includes(target.status)||target.respawnRequired;
+  if (game.state!=='ACTIVE' || !needsTreatment) return res.status(409).json({ error:'Ten uczestnik nie wymaga obecnie pomocy.' });
   const range=manager?50:30;
   if (!source.location || !target.location || distanceMeters(source.location.latitude,source.location.longitude,target.location.latitude,target.location.longitude)>range) return res.status(409).json({ error:`Podejdź na odległość maksymalnie ${range} metrów.` });
   if (source.lastAssistAt && Date.now()-source.lastAssistAt<10_000) return res.status(429).json({ error:'Odczekaj chwilę przed kolejną pomocą.' });
   if (target.activeTimer) { const timer=store.timers.get(target.activeTimer); if(timer){timer.cancelledAt=Date.now();clearTimeout(timerTimeouts.get(timer.id));timerTimeouts.delete(timer.id);} target.activeTimer=null; }
-  Object.assign(target,{ status:'ACTIVE', respawnRequired:false, hitCount:0 }); source.lastAssistAt=Date.now();
-  event(game.id,manager?'RESPAWN_OVERRIDE':'PLAYER_REVIVED',{ operator:source.callsign, participant:target.callsign, squadId:source.squadId||null },target.id,'INFO'); broadcastState(game.id);
+  const wasEliminated=target.respawnRequired||target.healthState==='ELIMINATED'||['CAPTURED','RESPAWN_WAIT','RESPAWN'].includes(target.status);
+  Object.assign(target,{ status:'ACTIVE', respawnRequired:false, hitCount:0, healthState:'HEALTHY' }); source.lastAssistAt=Date.now();
+  event(game.id,manager?'RESPAWN_OVERRIDE':wasEliminated?'PLAYER_REVIVED':'PLAYER_TREATED',{ operator:source.callsign, participant:target.callsign, squadId:source.squadId||null },target.id,'INFO'); broadcastState(game.id);
   res.json({ participant:participantView(target), medic:participantView(source) });
+});
+app.post('/api/participants/field-control', auth, requireRole('PARTICIPANT'), (req,res)=>{
+  const parsed=z.object({action:z.enum(['PAUSE','RESUME','SIGNAL','VISIBILITY']),signal:z.enum(['ATTENTION','FREEZE','EVACUATE']).optional()}).safeParse(req.body),participant=store.participants.get(req.auth.participantId),game=store.games.get(participant?.gameId);
+  if(!parsed.success||!participant||!game)return res.status(400).json({error:'Nieprawidłowe polecenie terenowe.'});
+  const capabilities=participantCapabilities(game,participant);
+  if(parsed.data.action==='VISIBILITY'){
+    if(!capabilities.includes('SELF_VISIBILITY'))return res.status(403).json({error:'Ta rola nie kontroluje swojej widoczności.'});
+    participant.fieldVisible=!participant.fieldVisible;event(game.id,'REFEREE_VISIBILITY',{callsign:participant.callsign,visible:participant.fieldVisible},participant.id);broadcastState(game.id);return res.json({participant:participantView(participant),game});
+  }
+  if(!feature(game,'fieldRefereeControls'))return res.status(409).json({error:'Sterowanie sędziego jest wyłączone przez GM.'});
+  if(['PAUSE','RESUME'].includes(parsed.data.action)){
+    if(!capabilities.includes('PAUSE_GAME'))return res.status(403).json({error:'Ta rola nie może wstrzymywać gry.'});
+    const expected=parsed.data.action==='PAUSE'?'ACTIVE':'PAUSED';if(game.state!==expected)return res.status(409).json({error:parsed.data.action==='PAUSE'?'Gra nie jest aktywna.':'Gra nie jest wstrzymana.'});
+    game.state=parsed.data.action==='PAUSE'?'PAUSED':'ACTIVE';game[parsed.data.action==='PAUSE'?'pausedAt':'resumedAt']=new Date().toISOString();event(game.id,`FIELD_${parsed.data.action}`,{callsign:participant.callsign},participant.id,'WARNING');broadcastState(game.id);return res.json({participant:participantView(participant),game});
+  }
+  if(!capabilities.includes('BROADCAST_SIGNAL'))return res.status(403).json({error:'Ta rola nie może nadawać sygnałów.'});
+  const signal=parsed.data.signal||'ATTENTION',labels={ATTENTION:'UWAGA — komunikat sędziego polowego',FREEZE:'STOP — wszyscy pozostają na miejscu',EVACUATE:'EWAKUACJA — wykonaj polecenia organizatora'};
+  const message={id:crypto.randomUUID(),gameId:game.id,audience:'ALL',body:labels[signal],signalType:signal,senderRole:'PARTICIPANT',senderName:participant.callsign,senderParticipantId:participant.id,senderStaffId:null,time:Date.now(),createdAt:new Date().toISOString()};store.messages.push(message);event(game.id,'FIELD_SIGNAL',{callsign:participant.callsign,signal},participant.id,'WARNING');broadcastMessage(game.id,message);broadcastState(game.id);res.status(201).json({message,participant:participantView(participant),game});
 });
 app.post('/api/hits', auth, requireRole('PARTICIPANT'), (req, res) => {
   const p = store.participants.get(req.auth.participantId), game = store.games.get(p?.gameId);
   if (!p || !game || game.state !== 'ACTIVE' || !feature(game, 'hitTracking')) return res.status(409).json({ error: 'Rejestrowanie trafień jest teraz wyłączone.' });
+  if(participantCapabilities(game,p).includes('INVULNERABLE'))return res.json({participant:participantView(p),threshold:game.modeSettings?.hitsToRespawn||1,respawnRequired:false,protected:true});
   if (p.respawnRequired || p.activeTimer) return res.status(409).json({ error: 'Najpierw zakończ bieżący respawn.' });
   p.hitCount = (p.hitCount || 0) + 1; const threshold = game.modeSettings?.hitsToRespawn || 1;
-  if (p.hitCount >= threshold) { p.respawnRequired = true; p.status = 'RESPAWN_WAIT'; event(game.id, 'RESPAWN_REQUIRED', { callsign: p.callsign, hits: p.hitCount }, p.id, 'WARNING'); }
-  else event(game.id, 'HIT_RECORDED', { callsign: p.callsign, hits: p.hitCount, threshold }, p.id, 'INFO');
+  if (p.hitCount >= threshold) { p.respawnRequired = true; p.healthState='ELIMINATED'; p.status = 'RESPAWN_WAIT'; event(game.id, 'RESPAWN_REQUIRED', { callsign: p.callsign, hits: p.hitCount }, p.id, 'WARNING'); }
+  else {p.healthState=p.hitCount>=Math.ceil(threshold*.66)?'CRITICAL':'WOUNDED';event(game.id, 'HIT_RECORDED', { callsign: p.callsign, hits: p.hitCount, threshold, healthState:p.healthState }, p.id, 'INFO');}
   broadcastState(game.id); res.status(201).json({ participant: participantView(p), threshold, respawnRequired: p.respawnRequired });
 });
 app.post('/api/timers', auth, requireRole('PARTICIPANT'), (req, res) => {
   const p = store.participants.get(req.auth.participantId); const game = store.games.get(p?.gameId);
   if (!p || !game || !feature(game, 'timers') || game.state !== 'ACTIVE' || p.activeTimer) return res.status(409).json({ error: 'Timer nie może być teraz uruchomiony.' });
+  if(p.respawnRequired&&!feature(game,'selfRespawn'))return res.status(409).json({error:'Samodzielny respawn jest wyłączony. Oczekuj na medyka lub sędziego.'});
   if (p.respawnRequired && feature(game, 'respawnZones') && !inRespawnZone(game, p)) return res.status(409).json({ error: 'Wejdź do strefy respawnu swojej drużyny.' });
   const seconds = p.respawnRequired ? participantRespawnSeconds(game,p) : p.team === 'SERE' ? game.sereTimerSeconds : game.opforTimerSeconds;
   const kind = p.respawnRequired ? 'RESPAWN' : p.team === 'SERE' ? 'SERE' : 'OPFOR';
@@ -966,6 +1038,7 @@ app.post('/api/games/:id/:action(start|pause|resume|finish|reset)', auth, requir
 function broadcastState(gameId) {
   persistSoon();
   for (const socket of io.sockets.sockets.values()) {
+    if(socket.auth?.role==='STAFF'&&!staffAccountValid(store.staff.get(socket.auth.staffId),socket.auth.sessionVersion)){socket.emit('session:revoked',{reason:'Konto lub sesja zostały unieważnione.'});socket.disconnect(true);continue;}
     if (socket.data.gameId === gameId) socket.emit('state:snapshot', snapshot(gameId, socket.auth));
   }
 }
@@ -975,7 +1048,7 @@ function broadcastMessage(gameId, message) {
   }
 }
 
-io.use((socket, next) => { try { socket.auth = jwt.verify(socket.handshake.auth?.token, JWT_SECRET); next(); } catch { next(new Error('unauthorized')); } });
+io.use((socket, next) => { try { socket.auth = jwt.verify(socket.handshake.auth?.token, JWT_SECRET);if(socket.auth.role==='STAFF'&&!staffAccountValid(store.staff.get(socket.auth.staffId),socket.auth.sessionVersion))throw new Error('expired'); next(); } catch { next(new Error('unauthorized')); } });
 io.on('connection', socket => {
   const a = effectiveViewer(socket.auth); const gameId = a.gameId || socket.handshake.auth?.gameId || demoGame.id;
   if (!store.games.has(gameId)) return socket.disconnect(true);

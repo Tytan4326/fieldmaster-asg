@@ -29,10 +29,13 @@ Telefon w tej samej sieci może otworzyć adres IP komputera, np. `http://192.16
 - instalowalna PWA, cache aplikacji i lokalna kolejka offline,
 - trwały lokalny zapis stanu po restarcie serwera,
 - wiele równoległych, całkowicie rozdzielonych sesji z własnymi kodami, uczestnikami i stanem,
-- ponad 50 funkcji włączanych osobno przez administratora,
+- 55 funkcji włączanych osobno przez administratora, wraz z oznaczeniami zalecanymi dla aktywnego trybu,
 - panel drużyn operacyjnych: dodawanie, usuwanie, limity osób, kolor, kanał radiowy, widoczność mapy, dozwolone role i własny czas respawnu,
-- edytowalne role ze zdolnościami: dowodzenie, medyk, saper, zwiad, VIP, operator konwoju i sędzia polowy,
-- presety całej operacji oraz presety uprawnień kont personelu,
+- edytowalne role ze zdolnościami kontrolowanymi także indywidualnie: medyk leczy pobliskich rannych, a neutralny i niezniszczalny sędzia może z telefonu zatrzymać grę, nadać alarm oraz pokazać lub ukryć własny GPS,
+- samodzielny respawn przełączany przez GM; po wyłączeniu wyeliminowana osoba czeka na medyka albo sędziego,
+- presety całej operacji oraz trwałe presety kont personelu; konta mają zakres strony/drużyny, datę wygaśnięcia, notatki i unieważnianie wszystkich zalogowanych urządzeń,
+- uproszczony ekran gracza z akcjami na górze oraz oddzielną zakładką informacji, telemetrii i ID operatora,
+- wielopoziomowy podręcznik w aplikacji opisujący tryby, role, konta, uprawnienia, GPS, mapę, respawn i bezpieczeństwo,
 - pełne archiwum przebiegu: ustawienia, uczestnicy, zdarzenia, wiadomości, SOS i trasy GPS; zapis ręczny i automatyczny przy zakończeniu/resetowaniu,
 - eksport archiwum JSON, raport CSV i sterowany czasem Replay tras.
 
@@ -43,7 +46,7 @@ $env:Path = 'C:\Program Files\nodejs;' + $env:Path
 & 'C:\Program Files\nodejs\npm.cmd' run check
 ```
 
-Testy integracyjne uruchamiają osobne serwery i sprawdzają również drużyny, limity miejsc, role i ich zdolności, presety, wiadomości dowódcy, pomoc medyka, indywidualny respawn, ewakuację VIP i archiwa. `npm run qa:visual` uruchamia Edge i kontroluje układ paneli na komputerze oraz telefonie.
+Testy integracyjne uruchamiają osobne serwery i sprawdzają również drużyny, role, leczenie, neutralnego sędziego, blokadę samodzielnego respawnu, presety oraz wygasanie i unieważnianie kont personelu. `npm run qa:visual` uruchamia Edge i kontroluje układ paneli na komputerze oraz telefonie.
 
 ## Docker
 
