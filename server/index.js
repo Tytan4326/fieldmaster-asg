@@ -31,7 +31,7 @@ const DEFAULT_FEATURES = Object.freeze({
   compassSharing: true, objectives: true, commanderApp: true, scoreBoard: true,
   backgroundTrackingAid: true, screenWakeLock: true, pushNotifications: true,
   reconnectRecovery: true, stableMapRendering: true, gpsQualityWarnings: true,
-  hardwareTimerShortcut: false, automaticCheckpoints: false, stealthMode: false,
+  hardwareTimerShortcut: false, bluetoothRemote: true, automaticCheckpoints: false, stealthMode: false,
   fogOfWar: false, medicSystem: false, ammoLogistics: false,
   mgrsAdmin: true, mgrsStaff: true, mgrsPlayer: true,
   routeReplay: true, modeIntel: true, zoneInteractions: true, stateAwareMarkers: true,
@@ -214,7 +214,7 @@ const joinSchema = z.object({
 const locationSchema = z.object({
   latitude: z.number().min(-90).max(90), longitude: z.number().min(-180).max(180),
   accuracy: z.number().min(0).max(10_000).optional(), battery: z.number().min(0).max(100).optional(),
-  heading: z.number().min(0).max(360).nullable().optional(), speed: z.number().min(0).max(150).nullable().optional(), headingSource: z.enum(['GPS','COMPASS','MOVEMENT','MANUAL']).optional(),
+  heading: z.number().min(0).max(360).nullable().optional(), speed: z.number().min(0).max(150).nullable().optional(), headingSource: z.enum(['GPS','COMPASS','CALIBRATED','MOVEMENT','MANUAL']).optional(),
   timestamp: z.string().datetime().optional()
 });
 const zoneSchema = z.object({

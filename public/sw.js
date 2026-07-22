@@ -1,5 +1,5 @@
-const CACHE='fieldmaster-shell-v23';
-const SHELL=['/','/index.html','/admin.html','/staff.html','/styles.css?v=17','/app.js?v=22','/geo.js?v=1','/vendor/leaflet/leaflet.css','/vendor/leaflet/leaflet.js','/manifest.webmanifest','/admin.webmanifest','/staff.webmanifest','/icon.svg','/icon-player-192.png','/icon-player-512.png','/icon-staff-192.png','/icon-staff-512.png','/icon-admin-192.png','/icon-admin-512.png'];
+const CACHE='fieldmaster-shell-v24';
+const SHELL=['/','/index.html','/admin.html','/staff.html','/styles.css?v=18','/app.js?v=23','/geo.js?v=1','/field-input.js?v=1','/vendor/leaflet/leaflet.css','/vendor/leaflet/leaflet.js','/manifest.webmanifest','/admin.webmanifest','/staff.webmanifest','/icon.svg','/icon-player-192.png','/icon-player-512.png','/icon-staff-192.png','/icon-staff-512.png','/icon-admin-192.png','/icon-admin-512.png'];
 self.addEventListener('install',event=>event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',event=>event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',event=>{

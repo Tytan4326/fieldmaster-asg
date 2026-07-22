@@ -187,7 +187,7 @@ test('tryby, strefy respawnu, trafienia i uprawnienia personelu działają razem
   assert.equal((await call('/api/messages', { method: 'POST', headers: playerHeaders, body: JSON.stringify({ audience: 'STAFF', recipientStaffId: staff.body.id, body: 'Kontakt z dowódcą działa.' }) })).response.status, 201);
   assert.equal((await call('/api/state', { headers: staffHeaders })).body.messages[0].body, 'Kontakt z dowódcą działa.');
   await call(`/api/games/${gameId}/start`, { method: 'POST', headers: adminHeaders, body: '{}' });
-  assert.equal((await call('/api/locations', { method: 'POST', headers: playerHeaders, body: JSON.stringify({ latitude: 52.2304, longitude: 21.0184, accuracy: 4, heading: 95, headingSource: 'GPS', timestamp: new Date().toISOString() }) })).response.status, 202);
+  assert.equal((await call('/api/locations', { method: 'POST', headers: playerHeaders, body: JSON.stringify({ latitude: 52.2304, longitude: 21.0184, accuracy: 4, heading: 95, headingSource: 'CALIBRATED', timestamp: new Date().toISOString() }) })).response.status, 202);
   assert.equal((await call('/api/hits', { method: 'POST', headers: playerHeaders, body: '{}' })).body.respawnRequired, false);
   assert.equal((await call('/api/hits', { method: 'POST', headers: playerHeaders, body: '{}' })).body.respawnRequired, true);
   const timer = await call('/api/timers', { method: 'POST', headers: playerHeaders, body: '{}' });

@@ -30,6 +30,8 @@ Telefon w tej samej sieci może otworzyć adres IP komputera, np. `http://192.16
 - trwały lokalny zapis stanu po restarcie serwera,
 - wiele równoległych, całkowicie rozdzielonych sesji z własnymi kodami, uczestnikami i stanem,
 - 55 funkcji włączanych osobno przez administratora, wraz z oznaczeniami zalecanymi dla aktywnego trybu,
+- konfigurowalny pilot Bluetooth/selfie: dwa uczone sygnały i osobne działania gracza, m.in. trafienie, timer, akcja strefy, SOS, mapa, kompas i funkcje sędziego,
+- symetryczny FOV z osią kierunku oraz automatyczna kalibracja obrotu telefonu na podstawie kolejnych odcinków ruchu GPS,
 - panel drużyn operacyjnych: dodawanie, usuwanie, limity osób, kolor, kanał radiowy, widoczność mapy, dozwolone role i własny czas respawnu,
 - edytowalne role ze zdolnościami kontrolowanymi także indywidualnie: medyk leczy pobliskich rannych, a neutralny i niezniszczalny sędzia może z telefonu zatrzymać grę, nadać alarm oraz pokazać lub ukryć własny GPS,
 - samodzielny respawn przełączany przez GM; po wyłączeniu wyeliminowana osoba czeka na medyka albo sędziego,
@@ -80,6 +82,10 @@ Bezpłatna instancja Render usypia się po okresie bezczynności, dlatego pierws
 2. Naciśnij `Zainstaluj aplikację`. Jeżeli system nie pokaże instalatora, aplikacja wyświetli właściwą instrukcję dla telefonu.
 3. W ustawieniach strony ustaw lokalizację na `Zezwalaj` i włącz dokładną lokalizację telefonu.
 4. Podczas testu GPS pozostaw ekran aktywny i najlepiej wyjdź na otwartą przestrzeń.
+
+Pilot konfiguruje się w panelu gracza w `INFO → Pilot Bluetooth / selfie`. Najpierw włącz sterowanie, wybierz działanie A/B i użyj `Naucz sygnał` dla każdego fizycznego przycisku. Zwykła PWA nie może zagwarantować odbioru klawiszy głośności po zablokowaniu telefonu; przy wygaszonym ekranie najlepiej działają sygnały multimedialne, a system Android musi pozostawić aplikację aktywną. Pełna gwarancja wymaga natywnej wersji Android z usługą pierwszoplanową.
+
+Kalibracja FOV działa po włączeniu kompasu. Gracz powinien przejść prosto 15–30 metrów; aplikacja porówna kierunek ruchu GPS z ułożeniem telefonu, zapisze korektę i będzie ją dalej wygładzać.
 
 Po zaakceptowaniu zgód pozycja jest wysyłana organizatorowi już w lobby, dzięki czemu można sprawdzić urządzenia przed rozpoczęciem gry. Aplikacja najpierw próbuje dokładnego GPS, następnie automatycznie przełącza się na tryb zgodny i ponawia połączenie. Mapa używa domyślnie zdjęć satelitarnych Esri z wymaganym przypisaniem źródła oraz nakładki UTM/MGRS.
 
