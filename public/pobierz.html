@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#0b0e0c">
+  <title>Pobierz Fieldmaster na Androida</title>
+  <style>
+    :root{color-scheme:dark;font-family:Inter,system-ui,-apple-system,sans-serif;background:#080b09;color:#f3f7f2}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(circle at 50% 0,#20351b 0,#0b0f0c 48%,#050706 100%)}
+    main{width:min(100%,620px);padding:30px;border:1px solid #344231;border-radius:22px;background:#0d120fee;box-shadow:0 24px 80px #000b;text-align:center}
+    .eyebrow{margin:0 0 8px;color:#a3ff4f;font:800 12px ui-monospace,monospace;letter-spacing:.14em}
+    h1{margin:0;font-size:clamp(27px,7vw,46px)}
+    .lead{margin:12px auto 20px;max-width:470px;color:#b5c0b5;line-height:1.55}
+    .qr{display:block;width:min(100%,360px);height:auto;margin:0 auto 20px;padding:10px;border-radius:18px;background:#fff;box-shadow:0 0 0 1px #d9dfd5,0 18px 50px #0009}
+    .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    a{display:grid;place-items:center;min-height:50px;padding:12px 16px;border-radius:11px;text-decoration:none;font-weight:850}
+    .primary{background:#a3ff4f;color:#0b1207}.secondary{border:1px solid #415140;color:#d8e2d6;background:#141b15}
+    .steps{margin:22px 0 0;padding:18px;text-align:left;border-radius:13px;background:#111812;color:#c8d2c7;line-height:1.55}
+    .steps b{color:#fff}.url{margin:18px 0 0;color:#819080;font:11px/1.5 ui-monospace,monospace;overflow-wrap:anywhere}
+    @media(max-width:520px){main{padding:22px}.actions{grid-template-columns:1fr}.qr{width:min(100%,310px)}}
+  </style>
+</head>
+<body>
+  <main>
+    <p class="eyebrow">FIELDMASTER · ANDROID APK</p>
+    <h1>Zeskanuj i pobierz</h1>
+    <p class="lead">Skieruj aparat telefonu na kod QR. Otworzy się bezpośrednie pobieranie podpisanej aplikacji Fieldmaster.</p>
+    <img class="qr" src="/downloads/Fieldmaster-android-qr.png" width="1024" height="1024" alt="Kod QR do pobrania aplikacji Fieldmaster APK">
+    <div class="actions">
+      <a class="primary" href="/downloads/Fieldmaster-android.apk" download>Pobierz APK</a>
+      <a class="secondary" href="/downloads/Fieldmaster-android-qr.png" download>Pobierz kod QR</a>
+    </div>
+    <div class="steps"><b>Po pobraniu:</b> otwórz plik APK, zezwól przeglądarce na instalowanie aplikacji z tego źródła i wykonaj konfigurację GPS pokazaną w Fieldmasterze.</div>
+    <p class="url">https://fieldmaster-t8t4.onrender.com/downloads/Fieldmaster-android.apk</p>
+  </main>
+</body>
+</html>

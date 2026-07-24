@@ -7,6 +7,7 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "icons": "node scripts/generate-icons.mjs",
+    "qr": "node scripts/generate-download-qr.mjs",
     "test": "node --test --test-force-exit server/*.test.js",
     "check": "node --check public/app.js && node --check server/index.js && npm test",
     "qa:visual": "node scripts/visual-qa.mjs",
@@ -27,5 +28,10 @@
     "pg": "^8.13.3",
     "socket.io": "^4.8.1",
     "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "jsqr": "^1.4.0",
+    "pngjs": "^7.0.0",
+    "qrcode": "^1.5.4"
   }
 }

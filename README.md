@@ -88,7 +88,7 @@ Bezpłatna instancja Render usypia się po okresie bezczynności, dlatego pierws
 
 Zalecana wersja terenowa na Androida:
 
-1. Pobierz `https://fieldmaster-t8t4.onrender.com/downloads/Fieldmaster-android.apk` albo wybierz `Zainstaluj aplikację → Pobierz APK`.
+1. Pobierz `https://fieldmaster-t8t4.onrender.com/downloads/Fieldmaster-android.apk`, zeskanuj kod na `https://fieldmaster-t8t4.onrender.com/pobierz.html` albo wybierz `Zainstaluj aplikację → Pobierz APK`.
 2. Przy pierwszej instalacji Android może poprosić o jednorazowe zezwolenie przeglądarce na instalowanie aplikacji z tego źródła.
 3. Otwórz APK, dołącz do sesji i włącz `TRYB TERENOWY`.
 4. W `INFO → Natywny tryb Android` nadaj dokładną lokalizację, ustaw `Zezwalaj zawsze`, włącz usługę `Fieldmaster — przycisk Volume Up` w Dostępności i wyłącz ograniczenia baterii.
