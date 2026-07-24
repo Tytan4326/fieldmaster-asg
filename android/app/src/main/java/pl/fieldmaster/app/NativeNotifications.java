@@ -10,6 +10,8 @@ import android.graphics.Color;
 import android.media.AudioAttributes;
 import android.media.RingtoneManager;
 
+import java.util.Locale;
+
 final class NativeNotifications {
     static final String OPERATIONS_CHANNEL = "fieldmaster_operations";
     static final String ALERTS_CHANNEL = "fieldmaster_timer_alerts";
@@ -28,16 +30,16 @@ final class NativeNotifications {
             "Tryb terenowy Fieldmaster",
             NotificationManager.IMPORTANCE_LOW
         );
-        operations.setDescription("Stała lokalizacja i obsługa przycisku Volume Up podczas rozgrywki.");
+        operations.setDescription("Stała lokalizacja i obsługa konfigurowalnych przycisków głośności.");
         operations.setShowBadge(false);
         manager.createNotificationChannel(operations);
 
         NotificationChannel alerts = new NotificationChannel(
             ALERTS_CHANNEL,
-            "Timer Fieldmaster",
+            "Akcje sprzętowe Fieldmaster",
             NotificationManager.IMPORTANCE_HIGH
         );
-        alerts.setDescription("Potwierdzenie uruchomienia timera i błędy akcji sprzętowych.");
+        alerts.setDescription("Potwierdzenia trafień, timerów, SOS oraz błędy akcji sprzętowych.");
         alerts.enableVibration(true);
         alerts.setVibrationPattern(new long[]{0, 180, 90, 280});
         alerts.setLightColor(Color.rgb(163, 255, 79));
@@ -76,7 +78,7 @@ final class NativeNotifications {
             .setContentTitle("Fieldmaster — tryb terenowy aktywny")
             .setContentText(detail)
             .setStyle(new Notification.BigTextStyle().bigText(
-                detail + "\nVolume Up uruchamia timer. Lokalizacja jest wysyłana także po wygaszeniu ekranu."
+                detail + "\nVolume Up i Volume Down działają zgodnie z ustawieniami gracza. GPS pozostaje aktywny po wygaszeniu ekranu."
             ))
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(open)
@@ -92,13 +94,31 @@ final class NativeNotifications {
             .build();
     }
 
-    static void showTimerResult(Context context, NativeApiClient.Result result) {
+    static void showHardwareResult(
+        Context context,
+        String action,
+        String keyLabel,
+        NativeApiClient.Result result
+    ) {
         createChannels(context);
-        String title = result.success ? "Timer uruchomiony" : "Nie uruchomiono timera";
+        String safeAction = action == null ? "" : action.trim().toUpperCase(Locale.ROOT);
+        String actionLabel = switch (safeAction) {
+            case "HIT" -> "Trafienie";
+            case "SOS" -> "SOS";
+            default -> "Timer";
+        };
+        String title = result.success
+            ? switch (safeAction) {
+                case "HIT" -> "Trafienie zapisane";
+                case "SOS" -> "SOS wysłany";
+                default -> "Timer uruchomiony";
+            }
+            : actionLabel + " — akcja odrzucona";
         String detail;
         if (result.success && result.seconds > 0) detail = "Odliczanie: " + result.seconds + " s.";
-        else if (result.success) detail = "Serwer przyjął akcję Volume Up.";
+        else if (result.success) detail = "Serwer przyjął akcję: " + actionLabel + ".";
         else detail = result.message;
+        if (keyLabel != null && !keyLabel.isBlank()) detail = keyLabel + " • " + detail;
 
         Intent openIntent = new Intent(context, MainActivity.class)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);

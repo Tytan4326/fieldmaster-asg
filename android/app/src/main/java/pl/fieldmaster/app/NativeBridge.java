@@ -53,6 +53,36 @@ public final class NativeBridge {
     }
 
     @JavascriptInterface
+    public void configureHardwareButtons(
+        boolean volumeUpEnabled,
+        String volumeUpAction,
+        boolean volumeDownEnabled,
+        String volumeDownAction
+    ) {
+        MainActivity activity = activityReference.get();
+        if (activity != null) {
+            activity.configureHardwareButtons(
+                volumeUpEnabled,
+                volumeUpAction,
+                volumeDownEnabled,
+                volumeDownAction
+            );
+        }
+    }
+
+    @JavascriptInterface
+    public void testHardwareButton(String key) {
+        MainActivity activity = activityReference.get();
+        if (activity != null) activity.testHardwareButton(key);
+    }
+
+    @JavascriptInterface
+    public void installUpdate(String apkUrl, String versionName) {
+        MainActivity activity = activityReference.get();
+        if (activity != null) activity.installUpdate(apkUrl, versionName);
+    }
+
+    @JavascriptInterface
     public String getStatus() {
         MainActivity activity = activityReference.get();
         return activity == null ? "{\"native\":false}" : activity.nativeStatusJson();

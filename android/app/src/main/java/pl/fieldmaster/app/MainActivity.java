@@ -5,13 +5,19 @@ import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.KeyEvent;
@@ -29,16 +35,33 @@ import android.window.OnBackInvokedDispatcher;
 
 import org.json.JSONObject;
 
+import java.io.File;
+import java.lang.ref.WeakReference;
+
 public final class MainActivity extends Activity {
     private static final int REQUEST_FOREGROUND_LOCATION = 4101;
     private static final int REQUEST_BACKGROUND_LOCATION = 4102;
     private static final int REQUEST_NOTIFICATIONS = 4103;
+    private static final String APK_MIME = "application/vnd.android.package-archive";
+    private static WeakReference<MainActivity> foregroundActivity = new WeakReference<>(null);
 
     private WebView webView;
     private boolean initialPermissionPromptShown;
     private boolean enableFieldModeAfterPermission;
     private GeolocationPermissions.Callback pendingGeolocationCallback;
     private String pendingGeolocationOrigin;
+    private long updateDownloadId = -1;
+    private boolean downloadReceiverRegistered;
+    private String pendingUpdateUrl;
+    private String pendingUpdateVersion;
+    private final BroadcastReceiver updateDownloadReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            if (!DownloadManager.ACTION_DOWNLOAD_COMPLETE.equals(intent.getAction())) return;
+            long completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1);
+            if (completedId == updateDownloadId) finishUpdateDownload(completedId);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -48,6 +71,7 @@ public final class MainActivity extends Activity {
         getWindow().getDecorView().setSystemUiVisibility(0);
         NativeNotifications.createChannels(this);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) registerPredictiveBack();
+        registerUpdateDownloadReceiver();
 
         webView = new WebView(this);
         webView.setBackgroundColor(Color.rgb(11, 14, 12));
@@ -262,7 +286,7 @@ public final class MainActivity extends Activity {
         runOnUiThread(() -> {
             Toast.makeText(
                 this,
-                "Wybierz „Fieldmaster — przycisk Volume Up” i włącz usługę.",
+                "Wybierz „Fieldmaster — przyciski głośności” i włącz usługę.",
                 Toast.LENGTH_LONG
             ).show();
             startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
@@ -294,6 +318,135 @@ public final class MainActivity extends Activity {
         });
     }
 
+    void configureHardwareButtons(
+        boolean volumeUpEnabled,
+        String volumeUpAction,
+        boolean volumeDownEnabled,
+        String volumeDownAction
+    ) {
+        runOnUiThread(() -> {
+            NativeSessionStore.configureHardwareButtons(
+                this,
+                volumeUpEnabled,
+                volumeUpAction,
+                volumeDownEnabled,
+                volumeDownAction
+            );
+            notifyWebStatus();
+        });
+    }
+
+    void testHardwareButton(String key) {
+        runOnUiThread(() -> {
+            int keyCode = "DOWN".equalsIgnoreCase(key)
+                ? KeyEvent.KEYCODE_VOLUME_DOWN
+                : KeyEvent.KEYCODE_VOLUME_UP;
+            if (!NativeSessionStore.isHardwareButtonEnabled(this, keyCode)) {
+                Toast.makeText(this, "Ten przycisk jest wyłączony.", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            emitHardwareAction(
+                keyCode == KeyEvent.KEYCODE_VOLUME_UP ? "Volume Up" : "Volume Down",
+                NativeSessionStore.hardwareButtonAction(this, keyCode)
+            );
+        });
+    }
+
+    void installUpdate(String apkUrl, String versionName) {
+        runOnUiThread(() -> {
+            Uri uri = Uri.parse(apkUrl == null ? "" : apkUrl.trim());
+            if (!isTrustedUpdateUri(uri)) {
+                Toast.makeText(this, "Odrzucono nieprawidłowy adres aktualizacji.", Toast.LENGTH_LONG).show();
+                return;
+            }
+            if (!getPackageManager().canRequestPackageInstalls()) {
+                pendingUpdateUrl = uri.toString();
+                pendingUpdateVersion = versionName;
+                Toast.makeText(
+                    this,
+                    "Zezwól Fieldmasterowi instalować aktualizacje, a następnie wróć do aplikacji.",
+                    Toast.LENGTH_LONG
+                ).show();
+                startActivity(new Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getPackageName())
+                ));
+                return;
+            }
+            beginUpdateDownload(uri.toString(), versionName);
+        });
+    }
+
+    private void beginUpdateDownload(String apkUrl, String versionName) {
+        DownloadManager manager = getSystemService(DownloadManager.class);
+        if (manager == null) {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)));
+            return;
+        }
+        String safeVersion = versionName == null || versionName.isBlank()
+            ? "latest"
+            : versionName.replaceAll("[^0-9A-Za-z._-]", "-");
+        File directory = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if (directory == null) {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(apkUrl)));
+            return;
+        }
+        File target = new File(directory, "Fieldmaster-" + safeVersion + ".apk");
+        if (target.exists()) target.delete();
+
+        DownloadManager.Request request = new DownloadManager.Request(Uri.parse(apkUrl))
+            .setTitle("Aktualizacja Fieldmaster " + safeVersion)
+            .setDescription("Pobieranie podpisanego pakietu APK…")
+            .setMimeType(APK_MIME)
+            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            .setAllowedOverMetered(true)
+            .setAllowedOverRoaming(true)
+            .setDestinationInExternalFilesDir(
+                this,
+                Environment.DIRECTORY_DOWNLOADS,
+                target.getName()
+            );
+        updateDownloadId = manager.enqueue(request);
+        Toast.makeText(this, "Pobieranie aktualizacji rozpoczęte.", Toast.LENGTH_SHORT).show();
+    }
+
+    private void finishUpdateDownload(long downloadId) {
+        DownloadManager manager = getSystemService(DownloadManager.class);
+        if (manager == null) return;
+        try (Cursor cursor = manager.query(
+            new DownloadManager.Query().setFilterById(downloadId)
+        )) {
+            if (cursor == null || !cursor.moveToFirst()) return;
+            int status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
+            if (status != DownloadManager.STATUS_SUCCESSFUL) {
+                Toast.makeText(this, "Nie udało się pobrać aktualizacji.", Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
+        Uri apkUri = manager.getUriForDownloadedFile(downloadId);
+        if (apkUri == null) {
+            Toast.makeText(this, "Nie znaleziono pobranego pakietu APK.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW)
+                .setDataAndType(apkUri, APK_MIME)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception error) {
+            Toast.makeText(
+                this,
+                "Android nie otworzył instalatora. Otwórz pobrany plik z powiadomienia.",
+                Toast.LENGTH_LONG
+            ).show();
+        }
+    }
+
+    private void registerUpdateDownloadReceiver() {
+        IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+        registerReceiver(updateDownloadReceiver, filter, Context.RECEIVER_EXPORTED);
+        downloadReceiverRegistered = true;
+    }
+
     private void startFieldServiceIfReady() {
         if (!NativeSessionStore.isFieldModeEnabled(this)
             || !NativeSessionStore.hasSession(this)
@@ -312,15 +465,35 @@ public final class MainActivity extends Activity {
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
-        if (event.getKeyCode() == KeyEvent.KEYCODE_VOLUME_UP
+        int keyCode = event.getKeyCode();
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
             && NativeSessionStore.hasSession(this)
-            && isParticipantSurface()) {
+            && isParticipantSurface()
+            && NativeSessionStore.isHardwareButtonEnabled(this, keyCode)) {
             if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
-                triggerTimerFromNative();
+                emitHardwareAction(
+                    keyCode == KeyEvent.KEYCODE_VOLUME_UP ? "Volume Up" : "Volume Down",
+                    NativeSessionStore.hardwareButtonAction(this, keyCode)
+                );
             }
             return true;
         }
         return super.dispatchKeyEvent(event);
+    }
+
+    static boolean dispatchHardwareActionIfForeground(String keyLabel, String action) {
+        MainActivity activity = foregroundActivity.get();
+        if (activity == null || activity.isFinishing() || activity.isDestroyed()) return false;
+        activity.runOnUiThread(() -> activity.emitHardwareAction(keyLabel, action));
+        return true;
+    }
+
+    private void emitHardwareAction(String keyLabel, String action) {
+        if (webView == null) return;
+        String script = "window.dispatchEvent(new CustomEvent('fieldmaster:native-hardware',{" +
+            "detail:{key:" + JSONObject.quote(keyLabel) +
+            ",action:" + JSONObject.quote(action) + "}}))";
+        webView.evaluateJavascript(script, null);
     }
 
     private boolean isParticipantSurface() {
@@ -342,10 +515,30 @@ public final class MainActivity extends Activity {
     }
 
     @Override
+    protected void onStart() {
+        super.onStart();
+        foregroundActivity = new WeakReference<>(this);
+    }
+
+    @Override
     protected void onResume() {
         super.onResume();
+        if (pendingUpdateUrl != null && getPackageManager().canRequestPackageInstalls()) {
+            String url = pendingUpdateUrl;
+            String version = pendingUpdateVersion;
+            pendingUpdateUrl = null;
+            pendingUpdateVersion = null;
+            beginUpdateDownload(url, version);
+        }
         startFieldServiceIfReady();
         notifyWebStatus();
+    }
+
+    @Override
+    protected void onStop() {
+        MainActivity current = foregroundActivity.get();
+        if (current == this) foregroundActivity.clear();
+        super.onStop();
     }
 
     @Override
@@ -421,6 +614,7 @@ public final class MainActivity extends Activity {
         try {
             status.put("native", true);
             status.put("version", BuildConfig.VERSION_NAME);
+            status.put("versionCode", BuildConfig.VERSION_CODE);
             status.put("fineLocation", hasFineLocation());
             status.put("coarseLocation", hasCoarseLocation());
             status.put("backgroundLocation", hasBackgroundLocation());
@@ -430,6 +624,11 @@ public final class MainActivity extends Activity {
             status.put("fieldMode", NativeSessionStore.isFieldModeEnabled(this));
             status.put("session", NativeSessionStore.hasSession(this));
             status.put("serviceRunning", FieldOperationsService.isRunning());
+            status.put("volumeUpEnabled", NativeSessionStore.volumeUpEnabled(this));
+            status.put("volumeUpAction", NativeSessionStore.volumeUpAction(this));
+            status.put("volumeDownEnabled", NativeSessionStore.volumeDownEnabled(this));
+            status.put("volumeDownAction", NativeSessionStore.volumeDownAction(this));
+            status.put("canInstallUpdates", getPackageManager().canRequestPackageInstalls());
         } catch (Exception ignored) {
         }
         return status.toString();
@@ -458,8 +657,19 @@ public final class MainActivity extends Activity {
             && expected.getHost().equalsIgnoreCase(uri.getHost());
     }
 
+    private boolean isTrustedUpdateUri(Uri uri) {
+        return isTrustedUri(uri)
+            && "/downloads/Fieldmaster-android.apk".equals(uri.getPath());
+    }
+
     @Override
     protected void onDestroy() {
+        MainActivity current = foregroundActivity.get();
+        if (current == this) foregroundActivity.clear();
+        if (downloadReceiverRegistered) {
+            unregisterReceiver(updateDownloadReceiver);
+            downloadReceiverRegistered = false;
+        }
         if (webView != null) {
             webView.removeJavascriptInterface("FieldmasterNative");
             webView.destroy();

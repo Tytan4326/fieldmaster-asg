@@ -12,6 +12,7 @@ $signingFile = Join-Path $toolsRoot 'android-signing.properties'
 $keystoreFile = Join-Path $toolsRoot 'fieldmaster-release.p12'
 $outputDirectory = Join-Path $repoRoot 'public\downloads'
 $outputApk = Join-Path $outputDirectory 'Fieldmaster-android.apk'
+$versionMetadataFile = Join-Path $outputDirectory 'android-version.json'
 
 if (-not (Test-Path (Join-Path $javaHome 'bin\java.exe'))) {
     throw "Brak JDK 17 w $javaHome."
@@ -74,7 +75,29 @@ if ($LASTEXITCODE -ne 0) { throw 'Weryfikacja podpisu APK nie powiodla sie.' }
 
 $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $outputApk).Hash.ToLowerInvariant()
 $size = (Get-Item -LiteralPath $outputApk).Length
+$gradleConfig = Get-Content -LiteralPath (Join-Path $androidRoot 'app\build.gradle.kts') -Raw
+$versionCodeMatch = [regex]::Match($gradleConfig, 'versionCode\s*=\s*(\d+)')
+$versionNameMatch = [regex]::Match($gradleConfig, 'versionName\s*=\s*"([^"]+)"')
+if (-not $versionCodeMatch.Success -or -not $versionNameMatch.Success) {
+    throw 'Nie odczytano versionCode lub versionName z app/build.gradle.kts.'
+}
+$versionMetadata = [ordered]@{
+    versionCode = [int]$versionCodeMatch.Groups[1].Value
+    versionName = $versionNameMatch.Groups[1].Value
+    apkUrl = 'https://fieldmaster-t8t4.onrender.com/downloads/Fieldmaster-android.apk'
+    sha256 = $hash
+    size = $size
+    publishedAt = [DateTime]::UtcNow.ToString('o')
+}
+$versionJson = $versionMetadata | ConvertTo-Json
+[System.IO.File]::WriteAllText(
+    $versionMetadataFile,
+    $versionJson + [Environment]::NewLine,
+    [System.Text.UTF8Encoding]::new($false)
+)
 Write-Output "APK=$outputApk"
 Write-Output "SIZE=$size"
 Write-Output "SHA256=$hash"
+Write-Output "VERSION=$($versionMetadata.versionName) ($($versionMetadata.versionCode))"
+Write-Output "METADATA=$versionMetadataFile"
 Write-Output "UWAGA: zachowaj katalog .tools - zawiera prywatny klucz wymagany do przyszlych aktualizacji APK."

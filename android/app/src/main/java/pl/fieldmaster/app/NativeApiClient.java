@@ -13,6 +13,7 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Locale;
 
 final class NativeApiClient {
     private NativeApiClient() {
@@ -20,6 +21,15 @@ final class NativeApiClient {
 
     static Result triggerTimer(Context context) {
         return post(context, "/api/timers", new JSONObject());
+    }
+
+    static Result triggerHardwareAction(Context context, String action) {
+        return switch (action == null ? "" : action.trim().toUpperCase(Locale.ROOT)) {
+            case "TIMER" -> post(context, "/api/timers", new JSONObject());
+            case "HIT" -> post(context, "/api/hits", new JSONObject());
+            case "SOS" -> post(context, "/api/sos", new JSONObject());
+            default -> Result.failure(400, "Nieobsługiwana akcja przycisku.");
+        };
     }
 
     static Result sendLocation(Context context, Location location) {

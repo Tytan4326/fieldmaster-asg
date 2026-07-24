@@ -21,14 +21,22 @@ public final class FieldmasterAccessibilityService extends AccessibilityService 
 
     @Override
     protected boolean onKeyEvent(KeyEvent event) {
-        if (event.getKeyCode() != KeyEvent.KEYCODE_VOLUME_UP) return false;
+        int keyCode = event.getKeyCode();
+        if (keyCode != KeyEvent.KEYCODE_VOLUME_UP && keyCode != KeyEvent.KEYCODE_VOLUME_DOWN) {
+            return false;
+        }
         if (!NativeSessionStore.isFieldModeEnabled(this) || !NativeSessionStore.hasSession(this)) return false;
+        if (!NativeSessionStore.isHardwareButtonEnabled(this, keyCode)) return false;
 
         if (event.getAction() == KeyEvent.ACTION_DOWN && event.getRepeatCount() == 0) {
             long now = SystemClock.elapsedRealtime();
             if (now - lastTriggerAt >= 900) {
                 lastTriggerAt = now;
-                FieldOperationsService.triggerTimerFromAccessibility(this);
+                String action = NativeSessionStore.hardwareButtonAction(this, keyCode);
+                String keyLabel = keyCode == KeyEvent.KEYCODE_VOLUME_UP ? "Volume Up" : "Volume Down";
+                if (!MainActivity.dispatchHardwareActionIfForeground(keyLabel, action)) {
+                    FieldOperationsService.triggerHardwareActionFromAccessibility(this, action, keyLabel);
+                }
             }
         }
         return true;

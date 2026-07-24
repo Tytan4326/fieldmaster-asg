@@ -11,9 +11,9 @@ MVP jest PWA „online-first” z bezpieczną kolejką zdarzeń offline. Funkcje
 Od wersji natywnej system składa się z dwóch klientów korzystających z tego samego API:
 
 - PWA dla przeglądarek, iOS oraz paneli GM/personelu;
-- APK Android z zaufanym WebView, etapowymi Runtime Permissions, systemowym GPS, Foreground Service, trwałym powiadomieniem i filtrem Volume Up przez dobrowolną usługę dostępności.
+- APK Android z zaufanym WebView, etapowymi Runtime Permissions, systemowym GPS, Foreground Service, trwałym powiadomieniem i konfigurowalnym filtrem Volume Up/Down przez dobrowolną usługę dostępności.
 
-APK zapisuje token uczestnika wyłącznie w prywatnym magazynie aplikacji. Foreground Service wysyła pozycję do istniejącego `POST /api/locations`, a akcja sprzętowa uruchamia istniejący `POST /api/timers`, więc GM i Replay widzą natywne zdarzenia bez osobnego backendu. Krótki `PARTIAL_WAKE_LOCK` jest używany tylko na czas żądania sieciowego; ciągłe działanie sygnalizuje jawne powiadomienie.
+APK zapisuje token uczestnika i ustawienia przycisków wyłącznie w prywatnym magazynie aplikacji. Foreground Service wysyła pozycję do `POST /api/locations`, a akcje sprzętowe korzystają z istniejących `POST /api/hits`, `POST /api/timers` i `POST /api/sos`, więc GM i Replay widzą natywne zdarzenia bez osobnego backendu. Krótki `PARTIAL_WAKE_LOCK` jest używany tylko na czas żądania sieciowego; ciągłe działanie sygnalizuje jawne powiadomienie. Metadane `android-version.json` pozwalają WebView pokazać przycisk aktualizacji tylko dla wyższego `versionCode`.
 
 ```text
 PWA uczestnika ─┐                     ┌─ PostgreSQL (stan, zdarzenia)
