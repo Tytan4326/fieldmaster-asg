@@ -171,6 +171,7 @@ let movementHeading = null, movementHeadingAt = 0, movementAnchor = null;
 let headingCalibration = loadHeadingCalibration();
 let wakeLock = null, renderScheduled = false;
 let remoteSettings = loadRemoteSettings(), remoteLearnSlot = null, remoteLastSignal = '', remoteLastActionAt = 0;
+let nativeSessionSignature = '';
 let mapSerial = 0;
 let renderGeneration = 0;
 let mapLibraryRetries = 0;
@@ -197,6 +198,22 @@ function loadRemoteSettings(){try{const saved=JSON.parse(localStorage.getItem('f
 function saveRemoteSettings(){localStorage.setItem('fm-remote-settings',JSON.stringify(remoteSettings));setupHardwareShortcut();}
 function loadHeadingCalibration(){try{const saved=JSON.parse(localStorage.getItem('fm-heading-calibration')||'{}');return{offset:Number.isFinite(Number(saved.offset))?Number(saved.offset):0,samples:Math.max(0,Number(saved.samples)||0),updatedAt:Number(saved.updatedAt)||0};}catch{return{offset:0,samples:0,updatedAt:0};}}
 function saveHeadingCalibration(){localStorage.setItem('fm-heading-calibration',JSON.stringify(headingCalibration));}
+function nativeBridge(){return window.FieldmasterNative||null;}
+function nativeStatus(){try{return JSON.parse(nativeBridge()?.getStatus?.()||'{}');}catch{return{};}}
+function syncNativeSession(force=false){
+  const bridge=nativeBridge();if(!bridge)return;
+  const token=ui.view==='player'?localStorage.getItem('fm-player-token')||'':'';
+  const signature=`${token}:${ui.fieldMode?'1':'0'}`;if(!force&&signature===nativeSessionSignature)return;
+  nativeSessionSignature=signature;
+  try{bridge.configureSession(token,location.origin);if(token)bridge.setFieldMode(Boolean(ui.fieldMode));}catch{}
+}
+function nativeCheck(label,ok,note){return `<div class="native-check ${ok?'ready':'missing'}"><span>${ok?'✓':'!'}</span><div><b>${label}</b><small>${note}</small></div></div>`;}
+function nativeControlsHtml(){
+  const bridge=nativeBridge();
+  if(!bridge)return `<article class="mission-card native-apk-card"><div class="remote-card-head"><div><span class="eyebrow">WERSJA NATYWNA ANDROID</span><h3>GPS i Volume Up po wygaszeniu</h3></div><span class="status-pill warning">APK</span></div><p>Wersja APK utrzymuje GPS przez Foreground Service i może uruchamiać timer przyciskiem Volume Up także na ekranie blokady.</p><a class="btn btn-primary" href="/downloads/Fieldmaster-android.apk" download>↓ Pobierz Fieldmaster APK</a></article>`;
+  const status=nativeStatus();
+  return `<article class="mission-card native-apk-card"><div class="remote-card-head"><div><span class="eyebrow">NATYWNY TRYB ANDROID · v${esc(status.version||'1.0')}</span><h3>Gotowość pracy w tle</h3></div><span class="status-pill ${status.serviceRunning?'':'warning'}">${status.serviceRunning?'USŁUGA DZIAŁA':'WYMAGA KONFIGURACJI'}</span></div><div class="native-check-grid">${nativeCheck('Dokładna lokalizacja',status.fineLocation,status.fineLocation?'Android przekazuje precyzyjny GPS.':'Nadaj lokalizację dokładną.')}${nativeCheck('Lokalizacja w tle',status.backgroundLocation,status.backgroundLocation?'Dozwolona także po blokadzie.':'Ustaw „Zezwalaj zawsze”.')}${nativeCheck('Powiadomienia',status.notifications,status.notifications?'Stałe powiadomienie jest widoczne.':'Zezwól na powiadomienia usługi.')}${nativeCheck('Volume Up na blokadzie',status.accessibility,status.accessibility?'Usługa dostępności aktywna.':'Włącz usługę Fieldmaster w Dostępności.')}${nativeCheck('Oszczędzanie baterii',status.batteryUnrestricted,status.batteryUnrestricted?'Brak ograniczeń systemowych.':'Zalecane: ustaw „bez ograniczeń”.')}${nativeCheck('Tryb terenowy',status.fieldMode&&status.serviceRunning,status.fieldMode?'Usługa uruchamia się lub już działa.':'Włącz przyciskiem w nagłówku.')}</div><div class="native-action-grid"><button class="btn btn-blue" data-action="native-permissions">1. Nadaj uprawnienia GPS</button><button class="btn btn-blue" data-action="native-accessibility">2. Włącz Volume Up</button><button class="btn btn-ghost" data-action="native-battery">3. Ustaw baterię</button><button class="btn btn-primary" data-action="native-test-timer">Test Volume Up / timera</button></div><p class="remote-limit"><b>Bezpieczeństwo:</b> usługa dostępności nie czyta ekranu. Przechwytuje wyłącznie Volume Up i tylko wtedy, gdy tryb terenowy jest włączony.</p></article>`;
+}
 function resetHeadingCalibration(){headingCalibration={offset:0,samples:0,updatedAt:0};movementHeading=null;movementHeadingAt=0;movementAnchor=null;deviceHeading=rawDeviceHeading;saveHeadingCalibration();toast('Kalibracja wyzerowana','Przejdź prosto co najmniej kilkanaście metrów, aby ponownie ustawić FOV.');render();}
 
 function save(announce=true) {
@@ -208,6 +225,7 @@ window.addEventListener('storage', e => { if (e.key === 'fieldmaster-state' && e
 window.addEventListener('online', () => { toast('Połączenie przywrócone','Synchronizuję oczekujące zdarzenia.'); syncQueue(); render(); });
 window.addEventListener('offline', () => { toast('Brak połączenia','Zdarzenia są zapisywane lokalnie. SOS może nie dotrzeć!', 'critical'); render(); });
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); ui.installPrompt=e; render(); });
+window.addEventListener('fieldmaster:native-status',()=>{if(ui.view==='player'&&ui.playerTab==='info')render();});
 window.addEventListener('appinstalled',()=>{ui.installed=true;ui.installPrompt=null;toast('Aplikacja zainstalowana','Fieldmaster jest dostępny z ekranu głównego.');render();});
 
 function addEvent(type, text, participantId=null, severity='INFO') {
@@ -559,6 +577,7 @@ function currentPlayer(){
 }
 function clearPlayerSession(message='Sesja uczestnika jest nieważna.'){
   localStorage.removeItem('fm-player-token');localStorage.removeItem('fieldmaster-player-id');backend.token=null;backend.socket?.disconnect();stopGps();ui.joining=false;
+  nativeSessionSignature='';syncNativeSession(true);
   if(ui.view==='player'){ui.view='join';ui.joinStep=1;history.replaceState({},'',`?view=join`);render();toast('Dołącz ponownie',message,'warning');}
 }
 function handleUnauthorized(){
@@ -569,6 +588,7 @@ function handleUnauthorized(){
 function visibleForPlayer(){return state.participants;}
 function renderPlayer(){
   const me=currentPlayer(); if(!me){ui.view='join';renderJoin();return;}
+  syncNativeSession();
   if(me.mapAccess===false&&ui.playerTab==='map')ui.playerTab='status';
   manageGps(me);
   const demoGps=params.get('demo')==='1';
@@ -582,6 +602,7 @@ function renderPlayer(){
   <article class="mission-card player-identity-card"><div><span class="chip ${me.team==='SERE'?'chip-live':me.team==='NEUTRAL'?'chip-neutral':'chip-paused'}">${me.team}</span><b>${esc(me.callsign)}</b><small>${esc(roleByCode(me.role).name)} · ${me.healthState||'HEALTHY'}</small></div><span class="status-pill">${statusLabel(me.status)}</span></article>
   ${ui.playerTab==='map'&&me.mapAccess!==false?mapHtml(visibleForPlayer(me),me.team,310):ui.playerTab==='messages'?messagesHtml(me):ui.playerTab==='info'?playerInfoHtml(me):playerActions(me)}
   </section><nav class="bottom-nav"><button class="${ui.playerTab==='status'?'active':''}" data-player-tab="status"><span class="nav-icon">◉</span>AKCJE</button>${me.mapAccess!==false?`<button class="${ui.playerTab==='map'?'active':''}" data-player-tab="map"><span class="nav-icon">⌖</span>MAPA</button>`:''}${enabled('playerMessaging')?`<button class="${ui.playerTab==='messages'?'active':''}" data-player-tab="messages"><span class="nav-icon">✦</span>ŁĄCZNOŚĆ</button>`:''}<button class="${ui.playerTab==='info'?'active':''}" data-player-tab="info"><span class="nav-icon">i</span>INFO</button>${enabled('sos')?'<button class="sos-nav" data-action="sos-open"><span class="nav-icon">✚</span>SOS</button>':''}</nav></main>`;
+  if(ui.playerTab==='info')$('.player-info-stack')?.insertAdjacentHTML('afterbegin',nativeControlsHtml());
   startModeIntelTicker();
 }
 function insideZoneClient(me,zone){if(!me?.hasLocation)return false;return zone.shape==='POLYGON'&&zone.points?.length>=3?pointInPolygon(me.lat,me.lon,zone.points):distanceMeters(me.lat,me.lon,zone.center[0],zone.center[1])<=zone.radius;}
@@ -737,6 +758,10 @@ function handleAction(action,button){
   if(action==='hit-report')reportHit();
   if(action==='install')installApp();
   if(action==='field-mode')toggleFieldMode();
+  if(action==='native-permissions'){try{nativeBridge()?.requestLocationPermissions?.();setTimeout(render,700);}catch{}}
+  if(action==='native-accessibility'){try{nativeBridge()?.openAccessibilitySettings?.();}catch{}}
+  if(action==='native-battery'){try{nativeBridge()?.openBatteryOptimizationSettings?.();}catch{}}
+  if(action==='native-test-timer'){try{nativeBridge()?.triggerTimer?.();toast('Test wysłany','Natywna usługa próbuje uruchomić timer.');}catch(error){toast('Test niedostępny',error.message,'warning');}}
   if(action==='compass-enable')enableCompass(true);
   if(action==='compass-reset')resetHeadingCalibration();
   if(action==='remote-learn')startRemoteLearning(button.dataset.slot);
@@ -778,6 +803,16 @@ async function installApp(){
   backdrop.innerHTML=`<div class="modal" role="dialog" aria-modal="true"><div class="modal-icon">↓</div><h2>Zainstaluj Fieldmaster</h2><p>${ios?'W Safari naciśnij ikonę Udostępnij, przewiń listę i wybierz „Do ekranu początkowego”, a następnie „Dodaj”.':'W menu przeglądarki (⋮) wybierz „Zainstaluj aplikację” lub „Dodaj do ekranu głównego”. Jeżeli opcja nie jest widoczna, otwórz tę stronę w Chrome.'}</p><div class="modal-actions single"><button class="btn btn-primary" data-close>Rozumiem</button></div></div>`;
   document.body.append(backdrop);$('[data-close]',backdrop).onclick=()=>backdrop.remove();
 }
+const installPwaApp=installApp;
+installApp=async function(){
+  if(nativeBridge())return toast('APK jest już zainstalowane','Korzystasz z natywnej wersji Fieldmastera.');
+  if(!/android/i.test(navigator.userAgent))return installPwaApp();
+  const backdrop=document.createElement('div');backdrop.className='modal-backdrop';
+  backdrop.innerHTML=`<div class="modal" role="dialog" aria-modal="true"><div class="modal-icon">↓</div><h2>Wybierz wersję na Androida</h2><p><b>APK</b> obsługuje GPS i Volume Up także po wygaszeniu ekranu. PWA jest lżejsza, ale Android może ją uśpić.</p><div class="modal-actions"><button class="btn btn-ghost" data-pwa>Zainstaluj PWA</button><a class="btn btn-primary" href="/downloads/Fieldmaster-android.apk" download>Pobierz APK</a></div><button class="btn btn-sm btn-ghost" data-close style="margin-top:10px;width:100%">Anuluj</button></div>`;
+  document.body.append(backdrop);
+  $('[data-close]',backdrop).onclick=()=>backdrop.remove();
+  $('[data-pwa]',backdrop).onclick=()=>{backdrop.remove();installPwaApp();};
+};
 async function requestGpsTest(){
   if(!window.isSecureContext&&!['localhost','127.0.0.1'].includes(location.hostname)){ui.gpsStatus='ERROR';render();return toast('GPS wymaga HTTPS','Otwórz aplikację przez bezpieczny publiczny adres HTTPS.','critical');}
   if(!navigator.geolocation){ui.gpsStatus='ERROR';render();return toast('Brak GPS','Ta przeglądarka nie udostępnia geolokalizacji.','critical');}

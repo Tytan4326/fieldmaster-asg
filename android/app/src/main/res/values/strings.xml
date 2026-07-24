@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Fieldmaster</string>
+    <string name="accessibility_service_label">Fieldmaster — przycisk Volume Up</string>
+    <string name="accessibility_service_description">Przechwytuje wyłącznie przycisk zwiększania głośności, gdy użytkownik świadomie włączy tryb terenowy, aby uruchamiać timer przy wygaszonym ekranie.</string>
+    <string name="accessibility_summary">Po włączeniu trybu terenowego naciśnięcie Volume Up uruchamia timer Fieldmastera także w tle i na ekranie blokady. Poza trybem terenowym przycisk działa normalnie.</string>
+</resources>

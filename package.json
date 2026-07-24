@@ -9,7 +9,9 @@
     "icons": "node scripts/generate-icons.mjs",
     "test": "node --test --test-force-exit server/*.test.js",
     "check": "node --check public/app.js && node --check server/index.js && npm test",
-    "qa:visual": "node scripts/visual-qa.mjs"
+    "qa:visual": "node scripts/visual-qa.mjs",
+    "android:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android.ps1",
+    "android:build:fast": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android.ps1 -SkipLint"
   },
   "engines": {
     "node": ">=20"

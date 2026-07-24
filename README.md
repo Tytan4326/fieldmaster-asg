@@ -50,6 +50,14 @@ $env:Path = 'C:\Program Files\nodejs;' + $env:Path
 
 Testy integracyjne uruchamiają osobne serwery i sprawdzają również drużyny, role, leczenie, neutralnego sędziego, blokadę samodzielnego respawnu, presety oraz wygasanie i unieważnianie kont personelu. `npm run qa:visual` uruchamia Edge i kontroluje układ paneli na komputerze oraz telefonie.
 
+### Budowanie natywnego APK
+
+```powershell
+npm run android:build
+```
+
+Skrypt wykonuje Android Lint, kompiluje podpisany wariant release, weryfikuje podpis i kopiuje gotowy plik do `public/downloads/Fieldmaster-android.apk`. Prywatny klucz przyszłych aktualizacji pozostaje wyłącznie w ignorowanym katalogu `.tools`; należy zachować jego kopię zapasową.
+
 ## Docker
 
 Opcjonalnie:
@@ -77,6 +85,16 @@ Publiczne wdrożenie:
 Bezpłatna instancja Render usypia się po okresie bezczynności, dlatego pierwsze otwarcie po dłuższej przerwie może potrwać około minuty.
 
 ### Telefon, instalacja i GPS
+
+Zalecana wersja terenowa na Androida:
+
+1. Pobierz `https://fieldmaster-t8t4.onrender.com/downloads/Fieldmaster-android.apk` albo wybierz `Zainstaluj aplikację → Pobierz APK`.
+2. Przy pierwszej instalacji Android może poprosić o jednorazowe zezwolenie przeglądarce na instalowanie aplikacji z tego źródła.
+3. Otwórz APK, dołącz do sesji i włącz `TRYB TERENOWY`.
+4. W `INFO → Natywny tryb Android` nadaj dokładną lokalizację, ustaw `Zezwalaj zawsze`, włącz usługę `Fieldmaster — przycisk Volume Up` w Dostępności i wyłącz ograniczenia baterii.
+5. Stałe powiadomienie potwierdza działanie Foreground Service. Volume Up uruchamia timer na pierwszym planie, w tle oraz przy zablokowanym ekranie, gdy tryb terenowy i usługa dostępności są aktywne.
+
+Wersja PWA pozostaje dostępna dla iOS i szybkiego dostępu z przeglądarki, ale system może ją uśpić po wygaszeniu ekranu. Usługa dostępności APK nie czyta treści ekranu; filtruje wyłącznie Volume Up i wyłącznie podczas aktywnego trybu terenowego. Niektóre nakładki producentów wymagają dodatkowo ręcznego ustawienia baterii na `Bez ograniczeń`.
 
 1. Otwórz publiczny link dołączania w Chrome na Androidzie albo Safari na iPhonie.
 2. Naciśnij `Zainstaluj aplikację`. Jeżeli system nie pokaże instalatora, aplikacja wyświetli właściwą instrukcję dla telefonu.
